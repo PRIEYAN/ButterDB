@@ -175,7 +175,7 @@ github.com/PRIEYAN/ButterDB
 │   │   └── keyring/                   server key file, per-bucket DEK wrap/unwrap, fingerprint
 │   ├── storage/                       the only importer of modernc.org/sqlite
 │   │   ├── sqlitedb/  schema/
-│   │   └── objectrepo/  bucketrepo/  channelrepo/  keyrepo/  adminrepo/  jobrepo/  replicarepo/
+│   │   └── objectrepo/  bucketrepo/  channelrepo/  keyrepo/  adminrepo/  jobrepo/  replicarepo/  accountrepo/  opsrepo/
 │   ├── projection/
 │   │   ├── log/                       ProjectFromOp / ProjectFromOpTx, tamper, rejects
 │   │   ├── apply/                     one Applier per op type, in a Registry

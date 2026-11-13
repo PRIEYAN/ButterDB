@@ -111,10 +111,7 @@ where no decision settles them.
 | `s3.tls_cert_file` | `BUTTERDB_S3_TLS_CERT_FILE` | path | empty | PEM chain, `files` mode |
 | `s3.tls_key_file` | `BUTTERDB_S3_TLS_KEY_FILE` | path | empty | PEM key, `files` mode; a secret file (§2.5) |
 | `s3.trusted_proxies` | `BUTTERDB_S3_TRUSTED_PROXIES` | list | `["127.0.0.1/32", "::1/128"]` | CIDRs whose `X-Forwarded-For` is honoured |
-| `s3.commit_budget_base` | `BUTTERDB_S3_COMMIT_BUDGET_BASE` | duration | `5m` | Fixed part of the commit budget (A7) |
-| `s3.commit_budget_min_rate` | `BUTTERDB_S3_COMMIT_BUDGET_MIN_RATE` | int | `2097152` | Bytes per second of stored size added to the commit budget |
-| `s3.admission_wait` | `BUTTERDB_S3_ADMISSION_WAIT` | duration | `30s` | Longest wait for a put slot and spool reservation before `SlowDown` |
-| `s3.read_first_byte_budget` | `BUTTERDB_S3_READ_FIRST_BYTE_BUDGET` | duration | `60s` | Longest wait for the first body byte of a GET before `SlowDown` |
+| `s3.request_budget` | `BUTTERDB_S3_REQUEST_BUDGET` | duration | `30s` | Total time one S3 request may spend waiting on admission, the E10 send-rate limiter, Telegram flood waits and `getFile` slots before `503 SlowDown`; transfer time is not counted ([s3-api.md](s3-api.md) §12.1, A7) |
 | `s3.body_idle_timeout` | `BUTTERDB_S3_BODY_IDLE_TIMEOUT` | duration | `60s` | Longest gap between request body reads |
 | `s3.write_idle_timeout` | `BUTTERDB_S3_WRITE_IDLE_TIMEOUT` | duration | `60s` | Longest blocked response write |
 | `s3.keepalive_interval` | `BUTTERDB_S3_KEEPALIVE_INTERVAL` | duration | `15s` | Whitespace interval for long responses |
@@ -658,7 +655,7 @@ link) enters operator-confirmed rediscovery ([storage-model.md](storage-model.md
 | `unlinked` | No Telegram session | `503` | `503` |
 | `syncing` | Linked; remote registry check pending or refused, rediscovery awaiting confirmation, or a channel not yet `Final` since start | `503` | `503` |
 | `ready` | Serving gate open, Telegram connected | served | served |
-| `degraded` | Serving gate opened earlier in this process, Telegram now disconnected or the write coordinator cooling down longer than `s3.admission_wait` | served from projection and block cache; a cache miss past `s3.read_first_byte_budget` returns `503 SlowDown` | `503 SlowDown` with `Retry-After` ([s3-api.md](s3-api.md) §12.1) |
+| `degraded` | Serving gate opened earlier in this process, Telegram now disconnected or the write coordinator cooling down longer than `s3.request_budget` | served from projection and block cache; a cache miss that cannot be fetched within `s3.request_budget` returns `503 SlowDown` | `503 SlowDown` with `Retry-After` ([s3-api.md](s3-api.md) §12.1) |
 
 A server that starts while Telegram is unreachable stays `syncing`; it does not
 serve from a projection it has not re-verified. The process is the only writer
@@ -1180,7 +1177,7 @@ A proxy is optional. Caddy is the shipped example (`deploy/caddy/Caddyfile`).
 | --- | --- | --- |
 | Stream request and response bodies | Required; nginx `proxy_request_buffering off; proxy_buffering off;` | Required ([admin-api.md](admin-api.md) §2.4) |
 | Body size limit | None (nginx `client_max_body_size 0;`): an aws-chunked body is larger than the object it carries ([s3-api.md](s3-api.md) §2.6) | `1900m` |
-| Read timeout | At least the largest commit budget plus 60 s: `s3.commit_budget_base + limits.MaxStoredObjectBytes / s3.commit_budget_min_rate + 60 s` = 21 min 50 s with the defaults | `admin.upload_commit_budget` + 60 s |
+| Read timeout | At least `s3.request_budget` plus the slowest Telegram upload of the largest object plus 60 s: about 1,086 s at 2 MB/s; recommended 1,200 s ([s3-api.md](s3-api.md) §2.6) | `admin.upload_commit_budget` + 60 s |
 | Request URI | Forwarded byte for byte (nginx `proxy_pass http://127.0.0.1:9000;` with no URI part); the canonical URI is signed | |
 | `Host` header | Preserved unchanged; SigV4 signs it and virtual-hosted-style routing reads it | Preserved |
 | Client address | `X-Forwarded-For` appended; the proxy's address in `s3.trusted_proxies` | Same with `admin.trusted_proxies` |
@@ -1318,7 +1315,7 @@ Consequences at D4 scale:
 
 - 500,000 objects in the first year average about 1,370 PUTs per day, 16 % of
   the default ceiling. Peaks queue in admission and surface as `503 SlowDown`
-  past `s3.admission_wait` or the commit budget ([s3-api.md](s3-api.md) §12.1).
+  past `s3.request_budget` ([s3-api.md](s3-api.md) §12.1).
 - A bulk import is limited by the document rate: 100,000 objects take about 11.6
   days at 6/min. Plan migrations in days, or raise the limiter only from
   measured `tgprobe` results (§13.5). Raising it is an owner decision.

@@ -436,7 +436,7 @@ github.com/PRIEYAN/ButterDB
 │   ├── storage/                       the ONLY importer of modernc.org/sqlite
 │   │   ├── sqlitedb/                  open, per-connection pragmas, one writer + read-only WAL pool
 │   │   ├── schema/                    embedded migrations: projection/NNNN_*.sql, control/NNNN_*.sql (embed glob, no shared list file)
-│   │   └── objectrepo/  bucketrepo/  channelrepo/  keyrepo/  adminrepo/  jobrepo/  replicarepo/
+│   │   └── objectrepo/  bucketrepo/  channelrepo/  keyrepo/  adminrepo/  jobrepo/  replicarepo/  accountrepo/  opsrepo/
 │   ├── projection/
 │   │   ├── log/                       ProjectFromOp / ProjectFromOpTx, tamper, rejects, outcomes
 │   │   ├── apply/                     one Applier per op type, registered in a Registry
@@ -499,14 +499,14 @@ github.com/PRIEYAN/ButterDB
 | `internal/projection/{log,apply,rebuild}` | 03 L1–L3 |
 | `internal/crypto/{stream,randomaccess}`, `internal/crypto/keyring` | 03 L4, L5 |
 | `internal/storage/{objectrepo,bucketrepo}` | 03 L6 |
-| `internal/tgclient/...`, `internal/identity` | 04 prelude (shared types), L1–L6 |
+| `internal/tgclient/...`, `internal/identity`, `internal/storage/accountrepo` | 04 prelude (shared types), L1–L6 |
 | `internal/buckets`, `internal/syncer/...`, `internal/storage/channelrepo` | 05 L1–L6 |
 | `internal/ingest/...`, `internal/storage/jobrepo` | 06 L1–L6 |
 | `internal/readpath/{rangereader,blockcache,objectreader,httprange}` | 07 L1–L4 |
 | `internal/access/...`, `internal/storage/keyrepo`, `internal/s3api/...` | 08 L1–L6 |
 | `api/adminv1`, `internal/adminapi/...`, `internal/storage/adminrepo` | 09 prelude (DTOs), L1–L5 |
 | `apps/admin/...` | 10 prelude, L1–L6, integration |
-| `internal/ops/...`, `deploy/` (server), `test/s3compat`, `test/load`, `docs/guide/` | 11 L1–L6 |
+| `internal/ops/...`, `internal/storage/opsrepo`, `deploy/` (server), `test/s3compat`, `test/load`, `docs/guide/` | 11 L1–L6 |
 | `internal/replica/...`, `internal/storage/replicarepo`, `internal/readpath/replicasource`, replica admin handler, DTO file and GUI screen | 12 L1–L6 |
 | `api/transformv1`, `apps/transformd/...`, `internal/mediaapi/...`, `deploy/transformd/` | 13 prelude, L1–L6 |
 | `internal/core`, `cmd/butterdbd`, `test/acceptance/phaseNN` | Integration lane of every phase |
@@ -862,7 +862,7 @@ worktrees, and an integration lane that owns `internal/core`, `cmd/`,
 
 | Phase | Document | Goal | Builds on | Owner gate or input |
 | --- | --- | --- | --- | --- |
-| 01 | [01-foundation.md](phases/01-foundation.md) | Module, guardrail scripts and hooks, platform packages, config, logging, lifecycle, errors and limits; `butterdbd version` and `check-config` run | — | Project license (A10) |
+| 01 | [01-foundation.md](phases/01-foundation.md) | Module, guardrail scripts and hooks, platform packages, config, logging, lifecycle, errors and limits; `butterdbd version` and `check-config` run | — | MIT confirmed (A10); verify the root license and TDrive notice |
 | 02 | [02-formats-gate.md](phases/02-formats-gate.md) | TDX1 op catalogue, TDE1 format arithmetic, schema v1, SQLite access and domain types. **Hard gate**: after it, no format byte changes without a new decision | 01 lifecycle, errs, limits | Format freeze sign-off. Default (owner may change) |
 | 03 | [03-storage-engine.md](phases/03-storage-engine.md) | Projector, appliers, rebuild with per-key repair, TDE1 stream and random access, keyring, object and bucket repositories with keyset listing | 02 formats and schema | none |
 | 04 | [04-telegram-transport.md](phases/04-telegram-transport.md) | gotd transport, flow control and send-rate limiter, idempotent sends, ranged reads, RPCs, `faketg`, identity; `setup` and `tgprobe` | 03 projection ports | Test-DC `api_id`/`api_hash` for the gated smoke test (optional) |

@@ -69,8 +69,8 @@ Keys owned by [operations.md](operations.md) §2.4:
 | `s3.domains` | `BUTTERDB_S3_DOMAINS` | `[]` | Base domains under which `<bucket>.<domain>` selects virtual-hosted-style (§2.4). Empty means path-style only |
 | `s3.trusted_proxies` | `BUTTERDB_S3_TRUSTED_PROXIES` | `["127.0.0.1/32", "::1/128"]` | CIDRs whose `X-Forwarded-For` and `X-Forwarded-Proto` are honoured for rate limiting, logs and `Location` |
 | `s3.request_budget` | `BUTTERDB_S3_REQUEST_BUDGET` | `30s` | Total time one request may spend waiting on admission, the E10 send-rate limiter and Telegram flood waits before `503 SlowDown` (§12.1). Transfer time does not count |
-| `s3.max_concurrent_puts` | `BUTTERDB_S3_MAX_CONCURRENT_PUTS` | `4` | Process-wide put slots in `ingest/admission` |
-| `s3.max_concurrent_puts_per_key` | `BUTTERDB_S3_MAX_CONCURRENT_PUTS_PER_KEY` | `2` | Put slots one access key may hold at once |
+| `ingest.max_concurrent_puts` | `BUTTERDB_INGEST_MAX_CONCURRENT_PUTS` | `4` | Process-wide put slots in `ingest/admission`, shared with admin uploads (defined in [operations.md](operations.md) §2.4) |
+| `ingest.max_concurrent_puts_per_key` | `BUTTERDB_INGEST_MAX_CONCURRENT_PUTS_PER_KEY` | `2` | Put slots one access key may hold at once (defined in [operations.md](operations.md) §2.4) |
 | `s3.anonymous_rate` | `BUTTERDB_S3_ANONYMOUS_RATE` | `50` | Anonymous requests per second per client address (§4.11) |
 | `s3.anonymous_burst` | `BUTTERDB_S3_ANONYMOUS_BURST` | `100` | Burst for the anonymous limiter |
 | `s3.max_clock_skew` | `BUTTERDB_S3_MAX_CLOCK_SKEW` | `15m` | SigV4 request-time tolerance (§4.2) |
@@ -1274,7 +1274,7 @@ at Complete (D9, plan §7.4). The TDX1 `t=part`/`t=manifest` ops are not used.
 | Minimum part size | 5 MiB (5,242,880 bytes) for every listed part except the last, checked at Complete |
 | Maximum part size | `limits.MaxStoredObjectBytes` |
 | Total | Stored size of the sum of staged parts (each part number counted once at its latest size, through `format.CiphertextSize` when encrypted) at most `limits.MaxStoredObjectBytes`; checked at every UploadPart before its body is read and again at Complete for the listed parts |
-| Maximum encrypted plaintext | 1,991,808,112 bytes (the largest plaintext whose TDE1 size is at most 1,992,294,400; `internal/crypto/format` is authoritative) |
+| Maximum encrypted plaintext | 1,991,808,062 bytes (the largest plaintext whose TDE1 size is at most 1,992,294,400; `internal/crypto/format` is authoritative) |
 | Upload ID | 32 lowercase hex characters from `crypto/rand` |
 | Idle expiry | `s3.multipart_idle_expiry` (7 days) |
 
@@ -1608,7 +1608,7 @@ send and projection. Transfer time is never cut short. What is bounded is
 **waiting**: `s3.request_budget` (default 30 s, [operations.md](operations.md)
 §2.4) is the total time one request may spend waiting on
 
-- a put slot (`s3.max_concurrent_puts`, `s3.max_concurrent_puts_per_key`) and
+- a put slot (`ingest.max_concurrent_puts`, `ingest.max_concurrent_puts_per_key`) and
   a spool reservation in `ingest/admission`,
 - the E10 send-rate limiter (`document` class for the body, `message` class
   for `t=put` and `t=del`),
