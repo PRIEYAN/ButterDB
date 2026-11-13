@@ -10,7 +10,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-var ErrInvalid = errors.New("config: invalid configuration")
+var ErrInvalid = errors.New("invalid configuration")
 
 type loader struct {
 	cfg      Config
@@ -37,7 +37,7 @@ func (l *loader) failure() error {
 	if count == 0 {
 		return nil
 	}
-	return fmt.Errorf("config: %w: %d errors", ErrInvalid, count)
+	return fmt.Errorf("config: %w: %d error(s)", ErrInvalid, count)
 }
 
 func (l *loader) addError(key, message string) {
