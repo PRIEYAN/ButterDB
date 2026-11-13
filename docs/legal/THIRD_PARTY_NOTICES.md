@@ -11,8 +11,8 @@ records every TDrive file ported into butterDB (D18).
 | New dependency | Listed in §3 in the same commit that adds it to a `go.mod` |
 | Before a release | §4 |
 
-butterDB's own license is an owner gate in phase 01 (A10). Whatever it is, the
-TDrive notice below is carried unchanged.
+butterDB's own license is an owner gate (A10) and is recorded in the root
+`LICENSE` once chosen. The TDrive notice below is carried unchanged.
 
 ---
 

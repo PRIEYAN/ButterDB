@@ -33,7 +33,7 @@ application.
 | D2 | Telegram account | **The deploying developer's own account**, with their own `api_id` and `api_hash` from my.telegram.org. butterDB never ships a shared credential |
 | D3 | Tenancy | **One admin, many keys.** A deployment has one owner, who creates buckets and any number of scoped access keys for any number of applications |
 | D4 | Scale target | **Small.** Under about 2,000 daily users, under 500,000 objects and under 1 TB per deployment in its first year. One server with a disk cache; a CDN is optional |
-| D5 | API surface | **S3-compatible API plus a Cloudinary-style media API.** AWS SDKs and tools work against butterDB by changing the endpoint. Media transforms are served from their own URL space |
+| D5 | API surface | **S3-compatible API plus a Cloudinary-style media API.** AWS SDKs and tools work against butterDB by changing the endpoint, for the operations `docs/spec/s3-api.md` supports. Its §17 lists the deviations from AWS S3; they await owner review. Media transforms have their own URL space |
 | D6 | Object addressing | **S3-style overwritable keys.** Applications choose the bucket and the key; a second PUT to the same key replaces the object |
 | D7 | Access model | **Bucket policy plus presigned URLs.** A bucket is public-read or private. Private objects are fetched with SigV4 presigned URLs |
 | D8 | Upload acknowledgement | **Acknowledged after the Telegram commit.** A successful PUT means Telegram has accepted the object and the projection has applied it |
@@ -42,7 +42,7 @@ application.
 | D11 | Encryption | **Optional.** Each bucket has a default, and each request may ask for encryption. Encrypted objects use the TDE1 container with keys held by the server |
 | D12 | Durability | **Second Telegram account.** A deployment may link a replica account. Every object is mirrored to it, and reads fall back to it |
 | D13 | Admin interface | **A native desktop GUI written with Fyne** for Windows, Linux and macOS |
-| D14 | Engine placement | **Headless server plus remote GUI.** `butterdbd` owns the Telegram session and serves the APIs. The Fyne app is a remote admin client over an authenticated admin API and holds no Telegram session |
+| D14 | Engine placement | **Headless server plus remote GUI.** `butterdbd` owns the Telegram session and serves the APIs. The Fyne app (Windows, Linux, macOS) is a remote admin client over an authenticated admin API and holds no Telegram session. Engineering constraint, not an owner decision: the server targets Linux and macOS, because the process lock and sandboxing are Unix-only (`docs/spec/operations.md` §6) |
 | D15 | Telegram login | **The standard Telegram user login with the developer's own `api_id`**: api_id, api_hash, phone, code and two-factor password. The GUI relays it to the server once |
 | D16 | Media processing | **URL transforms through a separate worker process.** Resize, crop, quality and format conversion (WebP, AVIF, JPEG, with HEIC input) plus video posters, done by `butterdb-transformd` using libvips and ffmpeg. The main server stays pure Go |
 | D17 | First release | **Store and serve first.** The first release has the S3 API, cached delivery, the admin GUI and operations. Media transforms and the replica account follow |
@@ -65,7 +65,7 @@ can be changed before the phase that builds it begins.
 | A4 | Objects are stored **byte for byte as uploaded**, as S3 requires. Metadata stripping (GPS, EXIF) applies to transform output, not to originals | Phases 06 and 13 |
 | A5 | Encryption is requested with the standard S3 header `x-amz-server-side-encryption`, and the bucket default applies when it is absent | Phase 06 |
 | A6 | A **server key file** (32 random bytes, generated at setup) is always required. It protects access-key secrets at rest and wraps every bucket's encryption key. Losing it makes encrypted objects unrecoverable, so the owner must back it up off the host | Phases 03 and 08 |
-| A7 | Long sends answer S3 SDKs with `503 SlowDown` and `Retry-After` when a Telegram flood wait exceeds the configured request budget. SDKs retry SlowDown automatically | Phase 06 |
+| A7 | A request may spend at most 30 seconds total waiting on admission, the send-rate limiter, Telegram flood waits and read slots; transfer time itself is not cut short. When a wait would exceed the remaining budget, answer `503 SlowDown` with `Retry-After` | Phase 06 |
 | A8 | Public-read buckets serve `Cache-Control` from a per-bucket max-age with ETag revalidation. Because keys can be overwritten, URLs are never marked immutable | Phase 07 |
 | A9 | The replica account is **optional per deployment** and, when linked, **mirrors every bucket**. Replication runs after the primary commit, from a durable journal | Phase 12 |
 | A10 | The project's own open-source license is an **owner gate** in phase 01. TDrive's MIT notice is carried regardless | Phase 01 |
