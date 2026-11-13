@@ -21,11 +21,14 @@ Use the owner gates in section 8 before moving main.
 
 ## 4. Prelude (orchestrator)
 
-Commit the bucket service contract before fan-out. `bucket.Info` comes from
-phase 02. `Create` publishes `bcreate` only after the private channel exists;
-`Configure` publishes `bcfg`; `Delete` publishes `bdel` and follows
+Freeze the bucket service API below before fan-out; L1 implements it in its
+owned package. Later consumers declare their own narrow interfaces, as
+`docs/spec/admin-api.md` §16 does. `bucket.Info` comes from phase 02.
+`Create` publishes `bcreate` only after the private channel exists;
+`Update` publishes `bcfg`; `Delete` publishes `bdel` and follows
 `docs/spec/storage-model.md` §5.4. A failed Telegram send is reconciled with
-the same stable job ID before retrying.
+the same stable job ID before retrying. These are L1's exported method
+signatures, not source to copy into the prelude as bare declarations.
 
 ```go
 package buckets
@@ -35,17 +38,16 @@ import (
 	"github.com/PRIEYAN/ButterDB/internal/domain/bucket"
 )
 
-type Service interface {
-	Create(ctx context.Context, spec bucket.Spec) (bucket.Info, error)
-	Update(ctx context.Context, name bucket.BucketName, patch bucket.Patch) (bucket.Info, error)
-	Delete(ctx context.Context, name bucket.BucketName) error
-	Get(ctx context.Context, name bucket.BucketName) (bucket.Info, error)
-	List(ctx context.Context) ([]bucket.Info, error)
-}
+func (s *Service) Create(ctx context.Context, spec bucket.Spec) (bucket.Info, error)
+func (s *Service) Update(ctx context.Context, name bucket.BucketName, patch bucket.Patch) (bucket.Info, error)
+func (s *Service) Delete(ctx context.Context, name bucket.BucketName) error
+func (s *Service) Get(ctx context.Context, name bucket.BucketName) (bucket.Info, error)
+func (s *Service) List(ctx context.Context) ([]bucket.Info, error)
 ```
 
-Commit the sync consumer ports against the phase 03 projector and phase 04
-transport types. Scan completion requires an empty Telegram history page, not
+Write any ports shared by sync lanes into the prelude under the consumer
+package that owns them, using the phase 03 projector and phase 04 transport
+types. Scan completion requires an empty Telegram history page, not
 a short page. New out-of-order ops repair only their own key (E6). Difference
 sync stores `pts` only after the corresponding projection transaction commits.
 The exact authority fields and recovery order are in `docs/spec/storage-model.md`
@@ -66,9 +68,17 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/buckets
 
-Implement internal/buckets. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Create, configure and delete buckets as private Telegram channels recorded on the registry channel, and create the registry channel itself at link time.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/buckets/`.
+
+**Read.** `docs/spec/storage-model.md` §4.1–§4.4 (registry creation, marker, `state.json`, startup verification), §5.1–§5.4 (bucket lifecycle), §9.3 (authority gates sends); `docs/spec/wire-format.md` §5.4–§5.8; `docs/spec/admin-api.md` §10 (what the admin API expects).
+
+**Rules.**
+- Bucket creation is idempotent across crashes. The channel is created with a stable random ID derived from the bucket job. `t=bcreate` is published on the registry and projected before success is reported.
+- S3 DeleteBucket requires an empty bucket. Deletion publishes `t=bdel`, then queues channel cleanup.
+- Configure (policy, default encryption, cache max-age) publishes `t=bcfg`. Policy and encryption defaults change through ops only, never by direct table writes.
+- A bucket accepts writes only once its channel has authority (storage-model §9.3).
 
 Verified source instructions for this lane:
 
@@ -80,8 +90,6 @@ Verified source instructions for this lane:
 | `backend/core/peer_resolution.go` | 37 | PATTERN-ONLY | `internal/buckets` (L1) | `RefreshPeer`: on a stale access hash, resolve again, validate the channel ID and non-zero hash, persist the new hash |
 | `backend/services/encryption/service.go` | 508 | PATTERN-ONLY | `internal/buckets` (L1) | `configOp` / `publishConfig`: encryption config travels as a TDX1 op and is projected like any other. butterDB publishes `t=encfg` with the wrapped DEK to the registry. Drop passwords, hints, biometrics |
 
-Commit this lane as `implement phase 05 internal buckets` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/services/personaldrive/service.go`: `type Telegram interface {`; `type HistorySync interface {`; `type Candidate struct {`; `type State struct {`; `type Config struct {`; `type Service struct {`; `func NewService(config Config) *Service {`; `func (s *Service) Prepare(ctx context.Context) (State, error) {`
@@ -90,11 +98,31 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/core/peer_resolution.go`: `func (e *Engine) RefreshPeer(ctx context.Context, channelID int64) (tgclient.InputPeer, error) {`
 - `backend/services/encryption/service.go`: `type Status struct {`; `type Config struct {`; `type Service struct {`; `func NewService(cfg Config) *Service {`; `func (s *Service) Status() (Status, error) {`; `func (s *Service) StatusContext(ctx context.Context) (Status, error) {`; `func (s *Service) CreatePassword(password string, hint string) error {`; `func (s *Service) CreatePasswordContext(ctx context.Context, password string, hint string) error {`
 
+**Tests (binding names).** `TestCreateBucketPublishesAndProjects`, `TestCreateIdempotentAfterCrash`, `TestDeleteRequiresEmpty`, `TestConfigureViaBcfgOnly`, `TestRegistryCreatedOnceAtLink`, `TestWritesGatedOnAuthority`, `TestBucketNameValidated`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/buckets/...
+go test -mod=readonly -race ./internal/buckets/...
+gofmt -l internal/buckets
+```
+
+**Commits.** `add bucket service on registry channel`, `add registry channel creation`.
+
 ### 5.2 Lane L2 — internal/syncer/scan
 
-Implement internal/syncer/scan. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port the full-history scan: discover the extent newest-first, read oldest-first into the spool in short transactions, then apply atomically through `ProjectFromOpTx` and earn authority.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/syncer/scan/`.
+
+**Read.** `docs/spec/storage-model.md` §9.1–§9.2 (gate, fields, order), §12.2 (rebuild from Telegram); `docs/spec/schema.md` §4.13 (`initial_scan_spool`); legacy `docs/butterDBCore.md` lines 1924–1980 (full history scan, authority).
+
+**Rules.**
+- Only an empty page proves exhaustion; short pages are normal. Fix an upper bound before phase 2 so new arrivals cannot extend the pass.
+- No transaction is held during a network wait. The spool is scratch, not a checkpoint.
+- Sample `pts` before the scan. Scan the registry channel first, then bucket channels.
+- Flood waits and transport errors use separate retry budgets. Caller cancellation stops retries, but a gotd shutdown is retryable.
 
 Verified source instructions for this lane:
 
@@ -104,18 +132,35 @@ Verified source instructions for this lane:
 | `backend/sync/parse.go` | 105 | PORT-PARTIAL | `internal/syncer/scan` (L2) | `ParseHistoryPage`, `SortAscending`, `ParsedMessage`. Change: parse with `internal/wire`; keep unknown ops (E5). Drop `ParseOptions` adoption |
 | `backend/sync/initial_scan_spool.go` | 136 | PORT | `internal/syncer/scan` (L2) | Spool writes and reads in batches of 256 (`initialScanSpoolBatch`), stale rows deleted at the start of a full scan. DDL moved to phase 02 |
 
-Commit this lane as `implement phase 05 internal syncer scan` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/sync/sync.go`: `type Progress struct {`; `type Engine struct {`; `type PeerResolver interface {`; `func NewEngine(db *sql.DB, tg tgclient.Client, peers PeerResolver) *Engine {`; `func (e *Engine) Incremental(ctx context.Context, channelID int64) error {`; `func (e *Engine) PrepareHardDeleteProjection(ctx context.Context, channelID int64) error {`; `func (e *Engine) ReconcileDeletions(ctx context.Context, channelID int64) (int, error) {`; `func (e *Engine) EnsureAuthoritative(ctx context.Context, channelID int64) error {`
 - `backend/sync/parse.go`: `type ParsedMessage struct {`; `type ParseOptions struct {`; `func ParseHistoryPage(msgs []tgclient.HistoryMessage) []ParsedMessage {`; `func ParseHistoryPageWithOptions(msgs []tgclient.HistoryMessage, opts ParseOptions) []ParsedMessage {`; `func SortAscending(msgs []ParsedMessage) {`
 
+**Tests (binding names).** the carried `truncated_history_test.go`, `history_retry_test.go`, `connection_hold_test.go`, `admission_test.go` and `authoritative_test.go` cases, plus `TestRegistryScannedFirst`, `TestScanEarnsAuthority`, `TestCancelBeforeApplyLeavesNoPartialState`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/syncer/scan/...
+go test -mod=readonly -race ./internal/syncer/scan/...
+gofmt -l internal/syncer/scan
+```
+
+**Commits.** `port full history scan with spool`.
+
 ### 5.3 Lane L3 — internal/syncer/difference (with per-key repair)
 
-Implement internal/syncer/difference (with per-key repair). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port incremental sync with `pts` differences, committing ops, watermark and `pts` per page, falling back to a history scan on `TooLong`, and applying per-key ordering repair (E6).
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/syncer/difference/`.
+
+**Read.** `docs/spec/storage-model.md` §9.1, §9.4 (per-key repair), §9.5 (deletion reconciliation); legacy `docs/butterDBCore.md` lines 1880–1923.
+
+**Rules.**
+- Each page commits ops, `last_synced_msg` and `pts` in one transaction. Deletion tombstones are emitted after the page transaction, and their individual failures are logged.
+- An op the server already projected at send time (above the watermark) is **not** a repair trigger. Repair triggers only when a newly ingested op has a lower message ID than a recorded op for the same key, and repairs that key alone.
+- `TooLong` falls back to `scan`. A pending repair escalates the next pass.
 
 Verified source instructions for this lane:
 
@@ -123,13 +168,29 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/sync/difference.go` | 169 | PORT | `internal/syncer/difference` (L3) | Bootstrap `pts` before a history scan, page through `getChannelDifference`, commit new ops, watermark and `pts` in one transaction per page, fall back to history on `TooLong`, apply deletion IDs |
 
-Commit this lane as `implement phase 05 internal syncer difference with per key repai` after its package tests pass.
+**Tests (binding names).** every carried `difference_test.go` case, the listed `sync_test.go` cases, with `TestIncrementalRepairsLocallyAheadReplayBeforeReturning` rewritten as `TestPerKeyRepairBeforeReturning`, plus `TestOwnWritesDoNotTriggerRepair`, `TestPageCommitsOpsWatermarkAndPtsTogether`, `TestTooLongFallsBackToScan`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/syncer/difference/...
+go test -mod=readonly -race ./internal/syncer/difference/...
+gofmt -l internal/syncer/difference
+```
+
+**Commits.** `port channel difference sync with per key repair`.
 
 ### 5.4 Lane L4 — internal/syncer/livesync
 
-Implement internal/syncer/livesync. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port the live-sync coordinator: channel IDs arrive as change signals, are debounced, and run sequential sync passes with a periodic backstop.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/syncer/livesync/`.
+
+**Read.** Legacy `docs/butterDBCore.md` lines 1992–2006 (live signals: debounce 750 ms, backstop 5 min, pass timeout 2 min, sequential flushes); `docs/spec/storage-model.md` §9.
+
+**Rules.**
+- Update payloads are never applied directly; they are signals only. Flushes are sequential. A failure waits for the next signal or the backstop, with no immediate retry.
+- Use the injected clock only. `Start` and `Close` follow `lifecycle.Component`, and no goroutine outlives `Close`.
 
 Verified source instructions for this lane:
 
@@ -138,18 +199,35 @@ Verified source instructions for this lane:
 | `backend/livesync/coordinator.go` | 268 | PORT | `internal/syncer/livesync` (L4) | Coalesce signal bursts per channel (debounce 750 ms), ignore unknown channels, backstop sync of known channels, per-sync timeout, failure reporting. Change: `Start` / `Close` per `docs/claude.md` §6.5; time from the clock |
 | `backend/livesync/activity.go` (`TelegramActivity`, `Signals`, `Signal`, `Dropped`) | (in 127) | PORT-PARTIAL | `internal/syncer/livesync` (L4) | Bounded, never-blocking signal buffer that counts drops. The gotd part moved to `tgclient/conn` in phase 04 |
 
-Commit this lane as `implement phase 05 internal syncer livesync` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/livesync/coordinator.go`: `type Syncer interface {`; `type EventSink interface {`; `type Config struct {`; `type Coordinator struct {`; `func NewCoordinator(cfg Config) *Coordinator {`; `func (c *Coordinator) Start(ctx context.Context) {`; `func (c *Coordinator) Stop() {`
 - `backend/livesync/activity.go`: `type Activity interface {`; `type TelegramActivity struct {`; `func NewTelegramActivity(buffer int) *TelegramActivity {`; `func (a *TelegramActivity) Signals() <-chan int64 {`; `func (a *TelegramActivity) Dropped() int64 {`; `func (a *TelegramActivity) Signal(channelID int64) {`; `func (a *TelegramActivity) Handle(_ context.Context, updates tg.UpdatesClass) error {`; `func ChannelIDsFromUpdates(updates tg.UpdatesClass) []int64 {`
 
+**Tests (binding names).** every carried `coordinator_test.go` and `activity_test.go` case, plus `TestBackstopFiresUnderContinuousSignals`, `TestCloseJoinsGoroutines`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/syncer/livesync/...
+go test -mod=readonly -race ./internal/syncer/livesync/...
+gofmt -l internal/syncer/livesync
+```
+
+**Commits.** `port live sync coordinator`.
+
 ### 5.5 Lane L5 — internal/syncer/reconcile (registry rediscovery, deletion reconciliation)
 
-Implement internal/syncer/reconcile (registry rediscovery, deletion reconciliation). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Recover on a fresh host by rediscovering the registry channel with operator confirmation, and reconcile Telegram-side deletions against projected objects.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/syncer/reconcile/`.
+
+**Read.** `docs/spec/storage-model.md` §4.4–§4.5 (startup verification and operator-confirmed rediscovery), §9.5 (deletion reconciliation), §13 (failure modes); `docs/spec/security.md` §16 (`TestRegistryRediscoveryRejectsForeignKey`); `docs/spec/operations.md` §10.3.
+
+**Rules.**
+- Rediscovery lists candidate registry channels from the account's own broadcast channels. A candidate whose `kfp` or `uid` differs from the loaded key can never be confirmed, and nothing is adopted without confirmation.
+- Deletion reconciliation checks backing-message existence in batches. A missing body or put makes the object disappear, and the event is recorded in `deleted_messages`.
+- Never delete anything based on a guess. Only Telegram's answer counts.
 
 Verified source instructions for this lane:
 
@@ -158,18 +236,35 @@ Verified source instructions for this lane:
 | `backend/sync/sync.go` | 874 | PORT | `internal/syncer/scan` (L2), `internal/syncer/reconcile` (L5) | `scan`: per-channel admission gate (`lockFor`, a weighted semaphore; queued callers cancel without waiting for another scan's network calls), `planHistory` (walk backwards for page bounds, only an empty page proves exhaustion, fail on no progress), `applyHistoryPlan` (oldest first), `applyInitialHistoryPlan` / `spoolHistoryPlan` / `commitInitialHistoryPlan` (fetch into the spool with no transaction open, then apply atomically), `EnsureAuthoritative`, `InitialSyncEmptyChannel`, `Incremental`, `retryFloodWait`, `getHistory` with four transport retries; constants `defaultPageSize = 100`, `maxFloodWaitRetries = 5`, `maxFloodWaitSleep = 60 * time.Second`. `reconcile`: `ReconcileDeletions` and `tombstoneMissing`, routed through the projector. Change: repair rule per E6; progress events become metrics. Drop: `adoptRecentCaptionlessMedia`, `PrepareHardDeleteProjection`, captionless media adoption options |
 | `backend/services/personaldrive/service.go` | 425 | PATTERN-ONLY | `internal/buckets` (L1), `internal/syncer/reconcile` (L5) | `Create`: create the broadcast channel, then sync and publish; `recover` / `dropProvisionalChannel`: a channel created but never committed is found and removed; `Discover` via owned channels. butterDB: a bucket channel without a committed `t=bcreate` is provisional; registry rediscovery finds the registry by its marker |
 
-Commit this lane as `implement phase 05 internal syncer reconcile registry rediscover` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/sync/sync.go`: `type Progress struct {`; `type Engine struct {`; `type PeerResolver interface {`; `func NewEngine(db *sql.DB, tg tgclient.Client, peers PeerResolver) *Engine {`; `func (e *Engine) Incremental(ctx context.Context, channelID int64) error {`; `func (e *Engine) PrepareHardDeleteProjection(ctx context.Context, channelID int64) error {`; `func (e *Engine) ReconcileDeletions(ctx context.Context, channelID int64) (int, error) {`; `func (e *Engine) EnsureAuthoritative(ctx context.Context, channelID int64) error {`
 - `backend/services/personaldrive/service.go`: `type Telegram interface {`; `type HistorySync interface {`; `type Candidate struct {`; `type State struct {`; `type Config struct {`; `type Service struct {`; `func NewService(config Config) *Service {`; `func (s *Service) Prepare(ctx context.Context) (State, error) {`
 
+**Tests (binding names).** the carried `reconcile_test.go` cases (minus the multipart case), plus `TestRegistryRediscoveryRejectsForeignKey`, `TestRediscoveryRequiresConfirmation`, `TestMissingBodyRemovesObject`, `TestReconcileBatches`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/syncer/reconcile/...
+go test -mod=readonly -race ./internal/syncer/reconcile/...
+gofmt -l internal/syncer/reconcile
+```
+
+**Commits.** `add registry rediscovery`, `add deletion reconciliation`.
+
 ### 5.6 Lane L6 — internal/storage/channelrepo
 
-Implement internal/storage/channelrepo. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Write the channel repository over `channels`, `initial_scan_spool`, `deleted_messages` and `pending_channel_cleanup`, including the transactional `pts` and watermark updates sync pages need.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/storage/channelrepo/`.
+
+**Read.** `docs/spec/schema.md` §4.5, §4.13–§4.16, §6; `docs/spec/storage-model.md` §9.1 (four fields, four meanings).
+
+**Rules.**
+- `last_synced_msg`, `pts`, `initial_sync_done` and `needs_projection_rebuild` keep their distinct meanings. Never infer one from another.
+- Tx variants take the caller's transaction. A channel deletion cascades every channel-scoped table.
+- A channel row never has a zero access hash.
 
 Verified source instructions for this lane:
 
@@ -177,7 +272,17 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/projection/channels.go` | 271 | PORT-PARTIAL | `internal/storage/channelrepo` (L6) | `InsertChannel` (upsert with input validation), `GetChannel`, `ListChannels`, `ChannelExists`, `UpdateAccessHash`, `SetChannelPts`, `SetChannelPtsTx`, `DeleteChannel` cascading every channel-scoped table. Drop `UpdateInviteLink`, `MarkPersonalBackfillDone`, personal-first ordering |
 
-Commit this lane as `implement phase 05 internal storage channelrepo` after its package tests pass.
+**Tests (binding names).** the carried `channels_test.go` cases, plus `TestPtsAndWatermarkInCallerTx`, `TestSpoolBatchesAndClear`, `TestDeletedMessagesRecorded`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/storage/channelrepo/...
+go test -mod=readonly -race ./internal/storage/channelrepo/...
+gofmt -l internal/storage/channelrepo
+```
+
+**Commits.** `port channel repository`.
 
 ## 6. Integration lane
 

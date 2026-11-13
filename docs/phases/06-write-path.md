@@ -68,9 +68,32 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/ingest/spool
 
-Implement internal/ingest/spool. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Stream an upload body to a private spool file, fsync it, and compute MD5, SHA-256 and the size while enforcing the size cap, so the put service sends from a durable, seekable local copy.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/ingest/spool/`.
+
+**Read.** `docs/spec/storage-model.md` §6.2–§6.3 (commit protocol, uncertain outcomes), §7 (limits), §8.5 (E8); `docs/spec/operations.md` §3.1 (`spool/` layout and modes); `docs/decisions.md` A4 (bytes stored exactly as uploaded).
+
+```go
+package spool
+
+type File struct {
+	Path   string
+	Size   int64
+	MD5    [16]byte
+	SHA256 [32]byte
+}
+
+func New(dir string, fs fsx.FS, clock clock.Clock) (*Spool, error)
+func (s *Spool) Write(ctx context.Context, jobID string, body io.Reader, declared int64, maxStored int64) (File, error)
+func (s *Spool) Open(f File) (io.ReadSeekCloser, error)
+func (s *Spool) Remove(jobID string) error
+```
+
+**Rules.**
+- Write to `spool/<job id>.plain` (mode `0600`) through a temp file and a rename after `fsync`. Reject before writing when the declared length exceeds the cap. Stop reading the moment the actual length exceeds the declared one.
+- Store bytes exactly as received (A4). Never normalise or strip metadata here.
+- On error the temp file is removed. Space reservation and accounting use the configured spool budget.
 
 Verified source instructions for this lane:
 
@@ -79,18 +102,36 @@ Verified source instructions for this lane:
 | `backend/mountwrite/staging.go` | 555 | PORT-PARTIAL | `internal/ingest/spool` (L1) | Keep: `DiskStagingStore` streaming a body to a private file while hashing, `exactLengthReader` (length mismatch and trailing data rejected), per-object and aggregate byte quotas, slot semaphore with cancellable wait, startup accounting of existing files, partial-file cleanup on every failure, safe keys from operation IDs, private modes. Change: hash MD5 (S3 ETag) and SHA-256 together; spool plaintext and encrypt during send through `crypto/stream.EncryptingReaderAt`. Drop `copyEncryptedToStage` |
 | `backend/services/file/service.go` (`acquireUploadSlot`, `uploadConcurrency`, `retryVisibleSend`, `stageUploadPart`, `createTempWithFallback`) | 797 | PATTERN-ONLY | `internal/ingest/admission` (L4), `internal/ingest/spool` (L1) | Process-wide upload slots; `retryVisibleSend` stops retrying once the outcome is unknown. SlowDown mapping from the flood-wait budget (A7) is new |
 
-Commit this lane as `implement phase 06 internal ingest spool` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/mountwrite/staging.go`: `type DiskStagingConfig struct {`; `type DiskStagingStore struct {`; `func NewDiskStagingStore(config DiskStagingConfig) (*DiskStagingStore, error) {`; `func (s *DiskStagingStore) Root() string {`; `func (s *DiskStagingStore) UsedBytes() int64 {`; `func (s *DiskStagingStore) Stage(ctx context.Context, request StageRequest, source io.Reader) (StagedObject, error) {`; `func (s *DiskStagingStore) Open(staged StagedObject) (ReadSeekCloser, error) {`; `func (s *DiskStagingStore) Remove(ctx context.Context, staged StagedObject) error {`
 - `backend/services/file/service.go`: `type PeerResolver interface {`; `type EventSink interface {`; `type Service struct {`; `type Metadata struct {`; `type DownloadResult struct {`; `type PreviewPayload struct {`; `func (r *contextReader) Read(p []byte) (int, error) {`; `func WithDownloadProgressID(ctx context.Context, requestID string) context.Context {`
 
+**Tests (binding names).** the carried `staging_test.go` and `locks_test.go` cases, plus `TestSpoolHashesMatch`, `TestDeclaredLengthEnforced`, `TestFsyncBeforeRename`, `TestTempRemovedOnError`, `TestBytesUnchanged`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/ingest/spool/...
+go test -mod=readonly -race ./internal/ingest/spool/...
+gofmt -l internal/ingest/spool
+```
+
+**Commits.** `add upload spool with hashing and fsync`.
+
 ### 5.2 Lane L2 — internal/ingest/put
 
-Implement internal/ingest/put. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Run the object write path behind `put.Service`: admission, spool, optional encryption with persisted salt and nonce prefix, the body document send, the `t=put` commit, projection, and cleanup of superseded messages. Answer only after the commit is projected (D8).
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/ingest/put/` (implementation; `contracts.go` is the prelude's).
+
+**Read.** `docs/spec/storage-model.md` §6.1–§6.6, §8.4–§8.5; `docs/spec/schema.md` §5.5 (`upload_jobs` state machine), §5.7 (`idempotency_keys`); `docs/spec/s3-api.md` §8.1 (PutObject), §8.10 (encryption headers), §12.1 (budget); `docs/decisions.md` D8, A5, A7, E8, E9.
+
+**Rules.**
+- Persist the job row (including, when encrypted, the file salt and nonce prefix) **before** the first send. Retries reuse the job ID-derived random IDs and the same salt and prefix. Re-verify the spool SHA-256 before each retry.
+- Set `put_attempted` before the `t=put` send. An unknown outcome is reconciled through receipts and history, never resent with new identity.
+- Conditional puts (`IfMatch`, `IfNoneMatchAny`) are checked authoritatively at commit.
+- Telegram flood waits beyond the request budget return `SlowDown` through `admission`. No SQLite transaction is held across a send.
 
 Verified source instructions for this lane:
 
@@ -103,8 +144,6 @@ Verified source instructions for this lane:
 | `backend/mountwrite/coordinator.go` | 452 | PATTERN-ONLY | `internal/ingest/put` (L2) | `createOrLoad` keyed by operation ID so a retried request resumes, `withOperation`, `transition`, `markAborted`, `deferCleanup` |
 | `backend/services/file/upload_failures.go` | 126 | PATTERN-ONLY | `internal/ingest/put` (L2) | `classifyUploadFailure`: not sent, uncertain and canceled are distinct outcomes; phase 08 maps them to S3 errors |
 
-Commit this lane as `implement phase 06 internal ingest put` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/services/file/hidden_upload.go`: `type HiddenUploadRequest struct {`; `type HiddenBody struct {`; `func (s *Service) UploadHidden(ctx context.Context, channelID int64, request HiddenUploadRequest, source io.ReadSeeker) (HiddenBody, error) {`; `func (s *Service) RecoverHiddenUpload(`; `func (s *Service) RecoverAndDiscardHiddenUpload(`; `func (s *Service) DiscardHiddenReceipt(`; `func (s *Service) DiscardHiddenOperation(ctx context.Context, channelID int64, operationID string) error {`
@@ -114,11 +153,30 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/mountwrite/coordinator.go`: `type CoordinatorConfig struct {`; `type Coordinator struct {`; `func NewCoordinator(config CoordinatorConfig) (*Coordinator, error) {`; `type UUIDGenerator struct{}`; `func (UUIDGenerator) NewID() string {`; `func (c *Coordinator) Status() Status {`; `func (c *Coordinator) Drain(ctx context.Context) error {`; `func (c *Coordinator) Close(ctx context.Context) error {`
 - `backend/services/file/upload_failures.go`: `type UploadFailure struct {`; `func NotSentFailures(filePaths []string, err error) []UploadFailure {`; `func (s *Service) UploadWithFailures(ctx context.Context, channelID int64, filePaths, parentIDs []string, encrypt bool) ([]Metadata, []UploadFailure, error) {`; `func (o *failureUploadObserver) Started(id int, name string, size int64, parentID string) {`; `func (o *failureUploadObserver) Accepted(id int) {`; `func (o *failureUploadObserver) Completed(id int, name string) {`; `func (o *failureUploadObserver) Failed(id int, name string, err error) {`
 
+**Tests (binding names).** the carried `hidden_upload_test.go`, `hidden_upload_recovery_test.go`, `upload_retry_test.go` and `engine_write_test.go` cases, plus `TestPutAcknowledgedAfterProjection`, `TestEncryptedRetryReusesSaltAndNonce`, `TestSpoolHashMismatchFailsJob`, `TestOverwriteQueuesSupersededCleanup`, `TestIfNoneMatchAtCommit`, `TestFloodWaitPastBudgetSlowDown`, `TestIdempotentReplayReturnsSameObject`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/ingest/put/...
+go test -mod=readonly -race ./internal/ingest/put/...
+gofmt -l internal/ingest/put
+```
+
+**Commits.** `add put job journal and body send`, `add put commit with projection and superseded cleanup`, `add encrypted put with persisted parameters`.
+
 ### 5.3 Lane L3 — internal/ingest/remove
 
-Implement internal/ingest/remove. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Hard-delete objects: publish the `t=del` tombstone first, project it, then delete the object's Telegram messages in batches of 100, recovering partial batches through the delete job journal.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/ingest/remove/`.
+
+**Read.** `docs/spec/storage-model.md` §6.5 (tombstone then batches), §13; `docs/spec/schema.md` §5.6 (`delete_jobs`); `docs/spec/s3-api.md` §8.4–§8.5 (DeleteObject, DeleteObjects); `docs/decisions.md` D10, E4.
+
+**Rules.**
+- The tombstone is projected before any message is deleted. An unknown tombstone outcome sets `uncertain_del` and answers `SlowDown`.
+- Deleting a missing key succeeds (`204` semantics). Batches are at most 100 IDs, and a failed batch resumes from its checkpoint.
+- The Telegram deletion is irreversible, so nothing is deleted without a persisted plan.
 
 Verified source instructions for this lane:
 
@@ -129,8 +187,6 @@ Verified source instructions for this lane:
 | `backend/projection/hard_delete.go`, `hard_delete_intent.go` | 660, 179 | PATTERN-ONLY | `internal/ingest/remove` (L3) | Plan pages (`maxHardDeletePlanPageSize = 1000`), plan validation that refuses control messages and bodies referenced elsewhere |
 | `backend/services/file/mutations.go` (`Delete`, `purgeObject`, `deletePlannedBodies`, `SweepOrphanParts`) | 599 | PATTERN-ONLY | `internal/ingest/remove` (L3), `internal/ingest/sweeper` (L5) | Purge claims a durable plan, deletes bodies, then completes. `SweepOrphanParts` becomes the sweeper's orphan-body pass using `objectrepo.ManagedMsgIDsIn` |
 
-Commit this lane as `implement phase 06 internal ingest remove` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/services/file/upload.go`: `func (s *Service) Upload(ctx context.Context, channelID int64, filePaths []string, parentIDs []string, encrypt bool) ([]Metadata, error) {`; `func (s *Service) CancelUpload(uploadID int) bool {`
@@ -138,29 +194,102 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/projection/hard_delete.go`: `func ValidateHardDeletePlanItems(`; `func HardDeletePlanPage(ctx context.Context, db *sql.DB, channelID int64, opID string, afterMsgID int64, limit int) (ids []int64, total int64, done bool, err error) {`; `func CompleteHardDeletePlan(ctx context.Context, db *sql.DB, channelID int64, opID string) (err error) {`
 - `backend/services/file/mutations.go`: `func (s *Service) Meta(channelID int64, msgID int, name string, size int64, parentID string) error {`; `func (s *Service) MetaContext(ctx context.Context, channelID int64, msgID int, name string, size int64, parentID string) error {`; `func (s *Service) Rename(ctx context.Context, channelID int64, msgID int, newName string) (err error) {`; `func (s *Service) Move(ctx context.Context, channelID int64, msgID int, newParentID string) (err error) {`; `func (s *Service) Delete(ctx context.Context, channelID int64, msgID int) (err error) {`; `func (s *Service) TrashObject(ctx context.Context, channelID int64, objectID string) error {`; `func (s *Service) RestoreObject(ctx context.Context, channelID int64, objectID string) error {`; `type TrashListing struct {`
 
+**Tests (binding names).** the carried hard-delete pattern cases (batch resume after a failed batch), plus `TestTombstoneBeforeDelete`, `TestMissingKeySucceeds`, `TestBatchesOfHundred`, `TestUncertainTombstoneSlowDown`, `TestResumeAfterCrashMidBatch`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/ingest/remove/...
+go test -mod=readonly -race ./internal/ingest/remove/...
+gofmt -l internal/ingest/remove
+```
+
+**Commits.** `add hard delete with tombstone and batched message deletion`.
+
 ### 5.4 Lane L4 — internal/ingest/admission (send-rate limiter, flood-wait budget → SlowDown mapping, process-wide slots)
 
-Implement internal/ingest/admission (send-rate limiter, flood-wait budget → SlowDown mapping, process-wide slots). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Gate every write before it touches disk or Telegram: process-wide put slots, budget-aware waiting on the E10 send-rate limiter from `tgclient/flow`, and the A7 request budget that turns long waits into `503 SlowDown`.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/ingest/admission/`.
 
-Verified source instructions for this lane:
+**Read.** `docs/decisions.md` A7 and E10; `docs/spec/operations.md` §2 keys `ingest.max_concurrent_puts`, `ingest.max_concurrent_puts_per_key`, `telegram.send_rate.*`, `s3.request_budget`, and §13.3; `docs/spec/s3-api.md` §12.1. TDrive pattern only: `/home/prieyan/weeb/TDrive/backend/services/file/service.go` (`acquireUploadSlot`, `uploadConcurrency`, `retryVisibleSend`).
 
-| TDrive file | Lines | Verdict | Destination | Keep, change, and drop |
-|---|---:|---|---|---|
-| `backend/services/file/service.go` (`acquireUploadSlot`, `uploadConcurrency`, `retryVisibleSend`, `stageUploadPart`, `createTempWithFallback`) | 797 | PATTERN-ONLY | `internal/ingest/admission` (L4), `internal/ingest/spool` (L1) | Process-wide upload slots; `retryVisibleSend` stops retrying once the outcome is unknown. SlowDown mapping from the flood-wait budget (A7) is new |
+**Contracts.**
 
-Commit this lane as `implement phase 06 internal ingest admission send rate limiter f` after its package tests pass.
+```go
+package admission
 
-TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
+type Budget struct {
+	Deadline time.Time
+}
 
-- `backend/services/file/service.go`: `type PeerResolver interface {`; `type EventSink interface {`; `type Service struct {`; `type Metadata struct {`; `type DownloadResult struct {`; `type PreviewPayload struct {`; `func (r *contextReader) Read(p []byte) (int, error) {`; `func WithDownloadProgressID(ctx context.Context, requestID string) context.Context {`
+func NewBudget(now time.Time, total time.Duration) Budget
+func (b Budget) Remaining(now time.Time) time.Duration
+
+type SlowDownError struct {
+	RetryAfter time.Duration
+	Reason     string
+}
+
+func (e *SlowDownError) Error() string
+func (e *SlowDownError) Unwrap() error
+
+type Config struct {
+	MaxConcurrentPuts       int
+	MaxConcurrentPutsPerKey int
+}
+
+type Pacer interface {
+	Reserve(class flow.SendClass) (delay time.Duration, cancel func())
+}
+
+type Dependencies struct {
+	Config Config
+	Pacer  Pacer
+	Clock  clock.Clock
+}
+
+func New(deps Dependencies) (*Controller, error)
+func (c *Controller) AcquirePut(ctx context.Context, b Budget, bucketChannelID int64, key object.Key) (release func(), err error)
+func (c *Controller) WaitSend(ctx context.Context, b Budget, class flow.SendClass) error
+func (c *Controller) WaitFlood(ctx context.Context, b Budget, wait time.Duration) error
+```
+
+`Pacer` is satisfied by the E10 send-rate limiter in `internal/tgclient/flow` (phase 04 L2), which owns the token buckets. This lane owns no rate limiter of its own, so every send is limited exactly once.
+
+`(*SlowDownError).Unwrap` returns `errs.ErrSlowDown`, so `s3err.Map` and the admin error table map it without importing this package.
+
+**Rules.**
+- Slots are FIFO (a fair semaphore), shared by S3 and admin uploads. The per-key limit stops one hot key from taking every slot.
+- `WaitSend` calls `Pacer.Reserve`. If the delay ends after `Budget.Deadline`, it calls `cancel` (returning the token) and returns `*SlowDownError`. Otherwise it waits out the delay. Server-directed flood waits are an additional floor applied through `WaitFlood`.
+- If a wait would end after `Budget.Deadline`, return `*SlowDownError` immediately, with `RetryAfter` equal to the wait rounded up to whole seconds (minimum 1). Never sleep past the budget.
+- Every waiter honours `ctx` cancellation and returns `ctx.Err()`, not `SlowDown`.
+- Transfer time is outside the budget. Only waiting counts (A7).
+- No goroutine outlives a call. All time comes from the injected clock.
+
+**Tests (binding names).** `TestSlotsFIFO`, `TestPerKeyLimit`, `TestSlotReleaseOnPanicPath`, `TestBudgetExhaustedReturnsSlowDown`, `TestRetryAfterRoundedUpMinOne`, `TestSendReservationCancelledOnSlowDown`, `TestFloodWaitBeyondBudget`, `TestFloodWaitWithinBudgetSleeps`, `TestCancellationNotSlowDown`, `TestSlowDownUnwrapsToSentinel`. Use a fake clock; no real sleeps.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/ingest/admission/...
+gofmt -l internal/ingest/admission
+```
+
+**Commits.** `add write admission slots and request budget`, `add budget aware send pacing`.
 
 ### 5.5 Lane L5 — internal/storage/jobrepo + internal/ingest/sweeper (uncertain sends, pending cleanup, control migrations)
 
-Implement internal/storage/jobrepo + internal/ingest/sweeper (uncertain sends, pending cleanup, control migrations). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Write the job repository over `upload_jobs`, `delete_jobs` and `idempotency_keys`, and the sweeper that finishes uncertain sends, retries pending message cleanup, and expires idempotency rows.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/storage/jobrepo/` (except `multipart.go` and `multipart_test.go`, which belong to L6), `internal/ingest/sweeper/`.
+
+**Read.** `docs/spec/schema.md` §5.5–§5.7 (state machines and checks), §8 (retention), §9 (`storage/jobrepo` rows); `docs/spec/storage-model.md` §6.3; `docs/spec/security.md` §16 (`TestIdempotencyScopedPerAccessKey`).
+
+**Rules.**
+- Transitions are compare-and-swap on the prior state. A stale transition affects no row and returns a typed error.
+- Idempotency is scoped per access key or per device (E9).
+- The sweeper claims rows with backoff (1 min doubling to 1 h), never holds a transaction across a Telegram call, and only deletes messages whose ownership is recorded.
 
 Verified source instructions for this lane:
 
@@ -173,8 +302,6 @@ Verified source instructions for this lane:
 | `backend/mountwrite/recovery.go` | 188 | PATTERN-ONLY | `internal/ingest/sweeper` (L5) | `Recover` walks recoverable records: reconcile an uploading receipt before removing staged bytes, retry a committing operation idempotently, finish cleanup |
 | `backend/projection/multipart.go` (`QueuePartCleanup`, `PendingPartCleanup`, `ClearPartCleanup`) | (in 332) | PATTERN-ONLY | `internal/ingest/sweeper` (L5) | A durable cleanup queue of message IDs. The rest of the file is cut |
 
-Commit this lane as `implement phase 06 internal storage jobrepo internal ingest swee` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/mountwrite/hard_delete.go`: `func (c *Coordinator) HardDelete(ctx context.Context, request HardDeleteRequest) (MutationResult, error) {`
@@ -184,13 +311,144 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/mountwrite/recovery.go`: `type RecoveryReport struct {`; `func (c *Coordinator) Recover(ctx context.Context) (RecoveryReport, error) {`
 - `backend/projection/multipart.go`: `type FilePart struct {`; `func MultipartParts(db *sql.DB, channelID int64, fileMsgID int64) ([]FilePart, error) {`; `func MultipartPartsContext(ctx context.Context, db *sql.DB, channelID int64, fileMsgID int64) ([]FilePart, error) {`; `func PartsForUUID(db *sql.DB, channelID int64, uuid string) ([]FilePart, error) {`; `func PartsForUUIDContext(ctx context.Context, db *sql.DB, channelID int64, uuid string) ([]FilePart, error) {`; `func OrphanPartMessages(db *sql.DB, channelID int64) ([]int64, error) {`; `func DeleteFileParts(db *sql.DB, channelID int64, uuid string) error {`; `func DeleteFilePartsByMsgIDs(db *sql.DB, channelID int64, msgIDs []int64) error {`
 
+**Tests (binding names).** every schema §9 `storage/jobrepo` row (`TestTransitionCAS`, `TestEncryptedJobNeedsSaltAndNonce`, `TestIdempotencyScoped`, `TestNoTxAcrossNetwork`), plus `TestIdempotencyScopedPerAccessKey` (security §16) and the carried journal and recovery pattern cases, plus `TestSweeperFinishesUncertainPut`, `TestSweeperRetriesPendingCleanupWithBackoff`, `TestIdempotencyRowsExpire`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/storage/jobrepo/... ./internal/ingest/sweeper/...
+go test -mod=readonly -race ./internal/storage/jobrepo/... ./internal/ingest/sweeper/...
+gofmt -l internal/storage/jobrepo internal/ingest/sweeper
+```
+
+**Commits.** `add job repository with compare and swap transitions`, `add write path sweeper`.
+
 ### 5.6 Lane L6 — internal/ingest/multipartstage (S3 multipart part storage and assembly into the spool)
 
-Implement internal/ingest/multipartstage (S3 multipart part storage and assembly into the spool). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Stage S3 multipart parts on local disk, keep the multipart index in `control.db`, and on Complete present the listed parts as one body to `internal/ingest/put`. Nothing reaches Telegram before Complete (D9).
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/ingest/multipartstage/`, `internal/storage/jobrepo/multipart.go` and `internal/storage/jobrepo/multipart_test.go` (new files in the L5 package; L5 owns every other file in `jobrepo`). The `multipart_uploads` and `multipart_parts` tables already exist in `control/0001_init.sql` (phase 02 L4, `docs/spec/schema.md` §5.8); add no migration.
 
-Commit this lane as `implement phase 06 internal ingest multipartstage s3 multipart p` after its package tests pass.
+**Read.** `docs/spec/s3-api.md` §9 (limits, states, §9.4 validation and outcome tables, §9.5–§9.7); `docs/spec/storage-model.md` §7.2; `docs/spec/schema.md` `multipart_uploads` and `multipart_parts`; `docs/spec/operations.md` data-directory row `multipart/<upload id>/`; `docs/spec/security.md` test `TestUploadIDValidatedBeforePath`.
+
+**Contracts.**
+
+```go
+package multipartstage
+
+type CreateRequest struct {
+	Bucket            bucket.BucketName
+	BucketChannelID   int64
+	Key               object.Key
+	ContentType       string
+	UserMeta          map[string]string
+	SystemMeta        map[string]string
+	Encrypted         bool
+	ChecksumAlgorithm string
+	AccessKeyID       string
+}
+
+type Upload struct {
+	ID          string
+	Bucket      bucket.BucketName
+	Key         object.Key
+	InitiatedAt time.Time
+	State       string
+}
+
+type Part struct {
+	Number   int
+	Size     int64
+	ETag     string
+	Checksum string
+	StagedAt time.Time
+}
+
+type CompletedPart struct {
+	Number   int
+	ETag     string
+	Checksum string
+}
+
+type Conditions struct {
+	IfMatch        string
+	IfNoneMatchAny bool
+}
+
+type PartPage struct {
+	Parts      []Part
+	NextMarker int
+	Truncated  bool
+}
+
+type UploadQuery struct {
+	Prefix         string
+	Delimiter      string
+	KeyMarker      string
+	UploadIDMarker string
+	Max            int
+}
+
+type UploadPage struct {
+	Uploads            []Upload
+	CommonPrefixes     []string
+	NextKeyMarker      string
+	NextUploadIDMarker string
+	Truncated          bool
+}
+
+type Index interface {
+	CreateUpload(ctx context.Context, u jobrepo.MultipartUpload) error
+	GetUpload(ctx context.Context, id string) (jobrepo.MultipartUpload, error)
+	PutPart(ctx context.Context, p jobrepo.MultipartPart) error
+	ListParts(ctx context.Context, id string, marker int, max int) ([]jobrepo.MultipartPart, bool, error)
+	ListUploads(ctx context.Context, bucketChannelID int64, q UploadQuery) ([]jobrepo.MultipartUpload, bool, error)
+	Transition(ctx context.Context, id string, from, to string, patch jobrepo.MultipartPatch) error
+	Delete(ctx context.Context, id string) error
+	IdleBefore(ctx context.Context, t time.Time, limit int) ([]string, error)
+}
+
+type Putter interface {
+	Put(ctx context.Context, req object.PutRequest, body io.Reader) (object.ObjectMeta, error)
+}
+
+type Dependencies struct {
+	Index   Index
+	Putter  Putter
+	Dir     string
+	Clock   clock.Clock
+	Random  io.Reader
+	FS      fsx.FS
+}
+
+func New(deps Dependencies) (*Stage, error)
+func (s *Stage) Create(ctx context.Context, req CreateRequest) (Upload, error)
+func (s *Stage) PutPart(ctx context.Context, uploadID string, partNumber int, size int64, body io.Reader) (Part, error)
+func (s *Stage) Complete(ctx context.Context, uploadID string, parts []CompletedPart, cond Conditions) (object.ObjectMeta, error)
+func (s *Stage) Abort(ctx context.Context, uploadID string) error
+func (s *Stage) ListParts(ctx context.Context, uploadID string, marker int, max int) (PartPage, error)
+func (s *Stage) ListUploads(ctx context.Context, bucketChannelID int64, q UploadQuery) (UploadPage, error)
+func (s *Stage) SweepIdle(ctx context.Context, idle time.Duration) (int, error)
+```
+
+**Rules.**
+- The upload ID is 32 lowercase hex characters from `crypto/rand`. Validate the format **before** building any path, so a crafted ID cannot escape the directory: return `errs.ErrNoSuchUpload`.
+- Part files are `multipart/<upload id>/part-<NNNNN>` (mode `0600`, directory `0700`), written to a temp file and renamed after `fsync`. Compute the MD5 ETag while streaming. A re-uploaded part number replaces the earlier file atomically.
+- Check the running stored-size total (through `format.CiphertextSize` when encrypted) against `limits.MaxStoredObjectBytes` before reading a part body. Every non-final listed part must be at least 5 MiB at Complete.
+- Complete: move `open` to `committing` with the job ID, concatenate the listed parts into one `io.Reader` without copying them into memory, and call `Putter.Put` with the conditions and metadata from `Create`. The multipart ETag is the hex MD5 of the concatenated binary part MD5s plus `-N`. On success the state is `completed` (storing the ETag, put message ID and part-list SHA-256) and part files are removed. On failure follow the s3-api §9.4 outcome table.
+- No SQLite transaction may stay open while a part is streamed or while `Put` runs.
+- `SweepIdle` aborts `open` uploads idle longer than `s3.multipart_idle_expiry` and removes their files. It never touches `committing`.
+
+**Tests (binding names).** `TestUploadIDValidatedBeforePath`, `TestPartReplaceAtomic`, `TestPartMD5ETag`, `TestRunningTotalCheckedBeforeBody`, `TestEncryptedTotalUsesCiphertextSize`, `TestCompleteConcatenatesListedPartsOnly`, `TestCompleteMultipartETag`, `TestCompleteStateTransitions`, `TestCompleteReplayIdenticalPartList`, `TestAbortRemovesFiles`, `TestAbortCommittingRejected`, `TestSweepIdleSkipsCommitting`, `TestNoTransactionDuringPut` (the fake `Index` fails if `Put` runs inside a transaction).
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/ingest/multipartstage/... ./internal/storage/jobrepo/...
+gofmt -l internal/ingest/multipartstage internal/storage/jobrepo
+```
+
+**Commits.** `add multipart upload index repository`, `add multipart part staging`, `add multipart complete assembly and idle sweep`.
 
 ## 6. Integration lane
 

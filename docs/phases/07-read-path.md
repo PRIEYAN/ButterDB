@@ -74,9 +74,17 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/readpath/rangereader (port TDrive backend/media range reader)
 
-Implement internal/readpath/rangereader (port TDrive backend/media range reader). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port the range reader: aligned 1 MiB block fetches with an LRU block cache, request coalescing, priority promotion, read-ahead that seeks cancel, a fast opening chunk, and file-reference refresh.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/readpath/rangereader/`.
+
+**Read.** Legacy `docs/butterDBCore.md` lines 3133–3240 (range handling, one stream over many messages, RangeReader, warm-up); `docs/spec/operations.md` §13 (retained constants).
+
+**Rules.**
+- Blocks are 1 MiB with 4 KiB alignment. Concurrent callers for an in-flight block join its flight. Foreground reads promote background speculation.
+- A seek cancels unclaimed read-ahead. Cancellation ends only the caller's wait.
+- Read-ahead is 8 blocks. The opening chunk is 256 KiB. The per-session cache budget is configurable.
+- Depend only on the `DocumentRangeReader` port (one method), never on `tgclient` constructors.
 
 Verified source instructions for this lane:
 
@@ -85,17 +93,34 @@ Verified source instructions for this lane:
 | `backend/media/range_reader.go` | 753 | PORT | `internal/readpath/rangereader` (L1) | Keep: `RangeReaderConfig`, `RangeReader`, block-aligned fetches of `RangeReadMaxBytes`, single-flight per block shared by concurrent readers, foreground joining or promoting a background flight, read-ahead window cancelled on seek, `openingChunkBytes = 256 * 1024` prefix on first read, `defaultBackgroundSlots = 4`, `defaultRangeCacheBytes = 64 * 1024 * 1024`, `defaultRangeRetryPolicy` (5 flood retries, 2 min max, 5 min total; 3 transient retries, 250 ms backoff to 3 s, 100 ms jitter), short-read retry, `ReaderAt` EOF semantics, `RangeStats`. Change: the client port (`ResolveDocument`, `ReadDocumentRange`) is declared here; shutdown context comes from `Start`, not a config field; clock injected |
 | `backend/media/cache.go` | 81 | PORT | `internal/readpath/rangereader` (L1) | In-memory LRU of blocks with a byte budget, oversized-entry rejection |
 
-Commit this lane as `implement phase 07 internal readpath rangereader port tdrive bac` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/media/range_reader.go`: `type RangeReaderConfig struct {`; `type RangeReader struct {`; `type RangeStats struct {`; `func NewRangeReader(cfg RangeReaderConfig) *RangeReader {`; `func (r *RangeReader) Close() {`; `func (r *RangeReader) Throughput() ThroughputStats {`; `func (r *RangeReader) Stats() RangeStats {`; `func (r *RangeReader) ReadStoredAt(ctx context.Context, ref tgclient.DocumentRef, p []byte, off int64) (int, error) {`
 
+**Tests (binding names).** every carried `range_reader*_test.go` case and benchmark, plus `TestSeekCancelsReadAhead`, `TestCoalescedFlightSingleRPC`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/readpath/rangereader/...
+go test -mod=readonly -race ./internal/readpath/rangereader/...
+gofmt -l internal/readpath/rangereader
+```
+
+**Commits.** `port range reader with coalescing and read ahead`.
+
 ### 5.2 Lane L2 — internal/readpath/blockcache
 
-Implement internal/readpath/blockcache. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Build the origin block cache: a disk cache of stored (ciphertext when encrypted) blocks keyed by Telegram location, with a byte budget, LRU eviction, crash-safe writes and lazy cleanup, decorating the range reader's read port.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/readpath/blockcache/`.
+
+**Read.** `docs/spec/operations.md` §3.1 (`cache/` layout), §2.4 `cache.*` keys, §13.6 (sizing); `docs/spec/security.md` (cache holds stored bytes only); `docs/decisions.md` A8.
+
+**Rules.**
+- The cache holds stored bytes only, never decrypted plaintext. Keys are `(channel, message, block index)`.
+- Writes go to a temp file and are renamed. A torn file is a miss. Concurrent writers never exceed the budget, and the index reloads from disk at start.
+- It implements the same read port it decorates, so the integration lane can stack it.
 
 Verified source instructions for this lane:
 
@@ -103,17 +128,34 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/thumbnail/cache.go` | 535 | PATTERN-ONLY | `internal/readpath/blockcache` (L2) | Disk LRU: SHA-256 keyed sharded paths, byte budget plus entry cap (`defaultMaxCacheEntries = 64 << 10`), temp-then-rename writes, index rebuilt by scanning on first use, stray temp cleanup, modes `0o700` / `0o600`, a nil cache is a disabled cache. butterDB caches stored bytes (ciphertext for encrypted objects) keyed by bucket channel, body message ID and block index; bodies are immutable, so overwrite needs no invalidation, only eviction |
 
-Commit this lane as `implement phase 07 internal readpath blockcache` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/thumbnail/cache.go`: `type Cache struct {`; `func NewCache(dir string, maxBytes int64) *Cache {`; `func (c *Cache) Get(key string) ([]byte, bool) {`; `func (c *Cache) GetLimited(key string, limit int64) ([]byte, bool) {`; `func (c *Cache) Has(key string) bool {`; `func (c *Cache) Put(key string, data []byte) error {`; `func (c *Cache) Usage() (used, maxBytes int64, entries int) {`; `func (c *Cache) Clear() error {`
 
+**Tests (binding names).** the carried `thumbnail/cache_test.go` pattern cases, `mountcache` LRU and coalescer cases, plus `TestStoresCiphertextOnly`, `TestTornFileIsMiss`, `TestBudgetUnderConcurrency`, `TestIndexReloadedAtStart`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/readpath/blockcache/...
+go test -mod=readonly -race ./internal/readpath/blockcache/...
+gofmt -l internal/readpath/blockcache
+```
+
+**Commits.** `add disk origin block cache`.
+
 ### 5.3 Lane L3 — internal/readpath/objectreader
 
-Implement internal/readpath/objectreader. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Resolve a bucket and key to its current version and serve plaintext bytes from it: projection lookup, document references, decryption through the random-access decryptor, and ETag, size and metadata for responses.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/readpath/objectreader/`.
+
+**Read.** `docs/spec/storage-model.md` §6.1, §8; `docs/spec/s3-api.md` §8.2–§8.3 (GetObject, HeadObject), §8.8–§8.9; phase 03 `crypto/randomaccess` and phase 07 L1's read port.
+
+**Rules.**
+- The reader pins the put message ID it resolved, so a concurrent overwrite never mixes versions mid-read.
+- Encrypted objects need the bucket DEK through a key-provider port, and the key copy is cleared when the reader closes. The ETag is the stored MD5 ETag, never a hash of ciphertext.
+- It returns a `ReaderAt` over plaintext offsets.
 
 Verified source instructions for this lane:
 
@@ -125,8 +167,6 @@ Verified source instructions for this lane:
 | `backend/mountcache/coalescer.go` | 362 | PORT | `internal/readpath/objectreader` (L3) | Generic cancellable load coalescer with invalidation, used by document resolution. Phase 13 needs the same algorithm (see phase 13) |
 | `backend/media/resolver.go`, `service.go`, `types.go` | 120, 431, 114 | PATTERN-ONLY | `internal/readpath/objectreader` (L3) | `Resolve` then `Open`: projected row to document refs to reader; `MasterKeyProvider` as a consumer port |
 
-Commit this lane as `implement phase 07 internal readpath objectreader` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/mountcontent/reader.go`: `type PeerResolver interface {`; `type MasterKeyProvider interface {`; `func (provider MasterKeyProviderFunc) MasterKey(ctx context.Context, channelID int64) ([]byte, error) {`; `type Config struct {`; `type Opener struct {`; `func New(cfg Config) (*Opener, error) {`; `func (o *Opener) Close() {`; `func (o *Opener) Open(ctx context.Context, channelID, fileID int64) (*Reader, error) {`
@@ -134,11 +174,30 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/mountcache/coalescer.go`: `func NewCoalescer[K comparable, V any](maxConcurrent int) *Coalescer[K, V] {`; `func (loads *Coalescer[K, V]) Load(`; `func (loads *Coalescer[K, V]) Invalidate(`; `func (loads *Coalescer[K, V]) InvalidateAll(terminalErr error, evict func()) {`; `func (loads *Coalescer[K, V]) Close(terminalErr error) {`; `func (loads *Coalescer[K, V]) Waiters(key K) int {`; `func (loads *Coalescer[K, V]) Len() int {`
 - `backend/media/resolver.go`: `type Resolver struct {`; `func NewResolver(db *sql.DB) *Resolver {`; `func (r *Resolver) Resolve(ctx context.Context, channelID, fileID int64) (LogicalFile, error) {`
 
+**Tests (binding names).** the carried `mountcontent` reader, encrypted-reader, document-cache, lifecycle and peer-cache cases, plus `TestReaderPinsVersion`, `TestEncryptedRangeAcrossChunks`, `TestKeyClearedOnClose`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/readpath/objectreader/...
+go test -mod=readonly -race ./internal/readpath/objectreader/...
+gofmt -l internal/readpath/objectreader
+```
+
+**Commits.** `add object reader with version pinning and decryption`.
+
 ### 5.4 Lane L4 — internal/readpath/httprange
 
-Implement internal/readpath/httprange. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Provide shared HTTP helpers for single-range parsing, conditional request evaluation in S3 precedence order, and response headers, reused by the S3, admin and media layers.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/readpath/httprange/`.
+
+**Read.** `docs/spec/s3-api.md` §8.2 (the range matrix and the conditional table with its precedence), §13.6 (Cache-Control for reads); legacy `docs/butterDBCore.md` lines 3133–3147.
+
+**Rules.**
+- Exactly one range: `bytes=a-b`, `bytes=a-` or `bytes=-n`. Multi-range is ignored per s3-api §8.2. Unsatisfiable ranges give `416` with `Content-Range: bytes */size`.
+- Conditional precedence follows the s3-api §8.2 table exactly (If-Match, If-Unmodified-Since, If-None-Match, If-Modified-Since). ETags compare as strong for If-Match and weak for If-None-Match.
+- Public-read caching never marks overwritable keys immutable (A8).
 
 Verified source instructions for this lane:
 
@@ -148,11 +207,21 @@ Verified source instructions for this lane:
 | `backend/mountdav/conditions.go` (`parseETagConditions`, `consumeEntityTag`, `validStrongETag`, `maxConditionalHeaderBytes`) | 318 | PORT-PARTIAL | `internal/readpath/httprange` (L4) | `If-Match` / `If-None-Match` entity-tag list parsing with a 16 KiB header cap. Drop the WebDAV `If` grammar (`parseDAVIf`, lexer) |
 | `backend/mountadapter/conditions.go` | 121 | PATTERN-ONLY | `internal/readpath/httprange` (L4) | `matchesIfMatch` / `matchesIfNoneMatch` evaluation against the current entity. butterDB adds `If-Modified-Since` / `If-Unmodified-Since` and `304` |
 
-Commit this lane as `implement phase 07 internal readpath httprange` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/media/server.go`: `type PlaybackUpdate struct {`; `type Server struct {`; `func NewServer(owner *Service) *Server {`; `func (s *Server) Add(session *Session) error {`; `func (s *Server) CloseSession(token string) error {`; `func (s *Server) UpdatePlayback(update PlaybackUpdate) error {`; `func (s *Server) Stats(token string) MediaStats {`; `func (s *Server) Close() error {`
+
+**Tests (binding names).** the carried `TestParseRangeHeader`, `TestMediaServerRangeForms`, `TestParseETagConditions` and `TestEntityTagSerializationAndValidation` cases, plus `TestRangeMatrix` and `TestConditionalPrecedence` (every row of s3-api §8.2), `TestNeverImmutable`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/readpath/httprange/...
+go test -mod=readonly -race ./internal/readpath/httprange/...
+gofmt -l internal/readpath/httprange
+```
+
+**Commits.** `add range and conditional request helpers`.
 
 ## 6. Integration lane
 
