@@ -43,8 +43,8 @@ function check(pkg, imp,   r, ir) {
 	if ((imp == "modernc.org/sqlite" || index(imp, "modernc.org/sqlite/") == 1) && !under(r, "internal/storage"))
 		violate("L3", pkg, imp, "only internal/storage/... may import modernc.org/sqlite")
 	if (kind == "root") {
-		if (isdomain(r) && !(inmod(imp) && isdomain(ir)))
-			violate("L1", pkg, imp, "domain packages may import the standard library and other domain packages only")
+		if (isdomain(r))
+			violate("L1", pkg, imp, "internal/domain, internal/wire and internal/crypto/format may import the standard library only")
 		if (under(r, "api") && !(inmod(imp) && under(ir, "api")))
 			violate("L6", pkg, imp, "api/... may import the standard library and api/... only")
 		if (inmod(imp) && under(ir, "apps"))

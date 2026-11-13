@@ -75,6 +75,11 @@ layering_rejects_domain_thirdparty() {
 	expect_status 1 && expect_output "L1 violation" && expect_output "internal/domain/errs imports example.com/thirdparty"
 }
 
+layering_rejects_domain_imports_domain() {
+	run_script bash "$scripts_dir/layering.sh" "$fixtures/layering_domain_imports_domain"
+	expect_status 1 && expect_output "L1 violation" && expect_output "internal/domain/object imports github.com/PRIEYAN/ButterDB/internal/domain/errs"
+}
+
 layering_rejects_api_importing_internal() {
 	run_script bash "$scripts_dir/layering.sh" "$fixtures/layering_api_internal"
 	expect_status 1 && expect_output "L6 violation" && expect_output "api/adminv1 imports"
@@ -194,6 +199,7 @@ worktree_create_remove_roundtrip() {
 case_run layering_rejects_gotd_outside_tgclient
 case_run layering_rejects_sqlite_outside_storage
 case_run layering_rejects_domain_thirdparty
+case_run layering_rejects_domain_imports_domain
 case_run layering_rejects_api_importing_internal
 case_run layering_rejects_root_importing_apps
 case_run layering_rejects_app_importing_internal

@@ -1,5 +1,5 @@
 package object
 
-import "github.com/PRIEYAN/ButterDB/internal/domain/errs"
+import "errors"
 
-var ErrMissing = errs.ErrNoSuchKey
+var ErrMissing = errors.New("missing")
