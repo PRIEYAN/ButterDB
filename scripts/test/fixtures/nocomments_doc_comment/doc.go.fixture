@@ -1,0 +1,14 @@
+package doc
+
+import "strings"
+
+// Value returns one
+func Value() int {
+	return 1
+}
+
+func hidden() string {
+	// strings.Builder needs a pointer receiver
+	var b strings.Builder
+	return b.String()
+}

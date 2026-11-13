@@ -105,6 +105,11 @@ nocomments_rejects_two_lines() {
 	expect_status 1 && expect_output "two.go:4: two consecutive comment lines"
 }
 
+nocomments_rejects_doc_comment() {
+	run_script bash "$scripts_dir/nocomments.sh" "$fixtures/nocomments_doc_comment"
+	expect_status 1 && expect_output "doc.go:5: doc comment on an exported declaration is not allowed" && expect_no_output "doc.go:11"
+}
+
 nocomments_rejects_block() {
 	run_script bash "$scripts_dir/nocomments.sh" "$fixtures/nocomments_block"
 	expect_status 1 && expect_output "block.go:3: block comment is not allowed"
@@ -206,6 +211,7 @@ case_run layering_rejects_app_importing_internal
 case_run layering_accepts_clean_tree
 case_run nocomments_rejects_two_lines
 case_run nocomments_rejects_block
+case_run nocomments_rejects_doc_comment
 case_run nocomments_rejects_todo
 case_run nocomments_rejects_commented_out_code
 case_run nocomments_allows_directives

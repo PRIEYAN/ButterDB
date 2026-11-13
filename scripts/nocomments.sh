@@ -43,9 +43,20 @@ function looks_like_code(t) {
 function check_text(t) {
 	if (t ~ /(^|[^A-Za-z0-9_])(TODO|FIXME|XXX)([^A-Za-z0-9_]|$)/) report("TODO, FIXME and XXX markers are not allowed")
 }
-FNR == 1 { state = 0; run = 0 }
+FNR == 1 { state = 0; run = 0; pending = 0 }
 {
 	line = $0
+	if (pending != 0 && line ~ /^(func (\([^)]*\) )?[A-Z]|(type|var|const) [A-Z])/) {
+		decl = line
+		sub(/^func (\([^)]*\) )?/, "", decl)
+		sub(/^(type|var|const) /, "", decl)
+		match(decl, /^[A-Za-z0-9_]+/)
+		if (substr(decl, 1, RLENGTH) == pendword) {
+			printf("nocomments: %s:%d: doc comment on an exported declaration is not allowed\n", FILENAME, pending)
+			bad++
+		}
+	}
+	pending = 0
 	n = length(line)
 	i = 1
 	codeseen = 0
@@ -105,6 +116,11 @@ FNR == 1 { state = 0; run = 0 }
 	run++
 	if (run == 2) report("two consecutive comment lines")
 	if (looks_like_code(trim(text))) report("comment looks like commented-out code")
+	if (run == 1) {
+		pending = FNR
+		pendword = trim(text)
+		sub(/[^A-Za-z0-9_].*/, "", pendword)
+	}
 }
 END { exit bad > 0 ? 1 : 0 }
 '
