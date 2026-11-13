@@ -300,7 +300,10 @@ func setContentType(dst *string, raw string) error {
 }
 
 func setB64Len(dst *[]byte, raw string, length int) error {
-	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if strings.ContainsAny(raw, "\r\n") {
+		return ErrWireMalformed
+	}
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(raw)
 	if err != nil || len(decoded) != length {
 		return ErrWireMalformed
 	}

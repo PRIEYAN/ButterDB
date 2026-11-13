@@ -207,7 +207,16 @@ func TestBase64Setter(t *testing.T) {
 	if err := setB64Len(&out, "AAAA", 3); err != nil || len(out) != 3 {
 		t.Fatalf("valid base64: %v, %v", out, err)
 	}
-	for _, raw := range []string{"", "AAAA", "AAA=", "AA+A", "AA/A", "!!!!"} {
+	if err := setB64Len(&out, "AAA", 2); err != nil || len(out) != 2 {
+		t.Fatalf("canonical unpadded base64: %v, %v", out, err)
+	}
+	if err := setB64Len(&out, "AB", 1); err != ErrWireMalformed {
+		t.Fatalf("non canonical trailing bits error = %v, want ErrWireMalformed", err)
+	}
+	if err := setB64Len(&out, "AA", 1); err != nil {
+		t.Fatalf("canonical single byte: %v", err)
+	}
+	for _, raw := range []string{"", "AAAA", "AAA=", "AA+A", "AA/A", "!!!!", "AA\rA", "AA\nA", "AAA\r"} {
 		if err := setB64Len(&out, raw, 2); err != ErrWireMalformed {
 			t.Fatalf("setB64Len(%q) error = %v, want ErrWireMalformed", raw, err)
 		}
