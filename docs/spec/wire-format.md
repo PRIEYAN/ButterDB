@@ -540,7 +540,7 @@ Parse(raw string) (Op, error):
         if eq <= 0                     → ErrWireMalformed
         kv[p[:eq]] = p[eq+1:]
 
-    t, ok := kv["t"]; if !ok           → ErrWireMalformed
+    t, ok := kv["t"]; if !ok || t == "" → ErrWireMalformed   (E16)
     op := Op{Type: OpType(t)}
     if !Known(op.Type)                 → op, ErrWireUnknownOp
 
@@ -579,7 +579,7 @@ valid only on the removed `t=part`.
 | `setEnum` | Raw value is one of the listed words (`pol`, `de`) | `ErrWireMalformed` |
 | `setContentType` | `QueryUnescape` succeeds; 1–1024 bytes; every byte in `0x20`–`0x7E` | `ErrWireMalformed` |
 | `setMetaEntry` | Name after the prefix is non-empty and `QueryUnescape`s; value `QueryUnescape`s; name, value and per-value size per section 5.2.1 or 5.2.2; no duplicate unescaped name; after all entries, the user metadata total is ≤ 2048 | `ErrWireMalformed` |
-| `setB64Len` | base64url decodes to exactly the stated length (`wrap` 72, `check` 61) | `ErrWireMalformed` |
+| `setB64Len` | Contains no CR or LF; canonical unpadded base64url (strict decoding) decodes to exactly the stated length (`wrap` 72, `check` 61) (E16) | `ErrWireMalformed` |
 
 `Format` applies the same checks to the `Op` fields before writing, so an
 invalid `Op` returns `ErrWireMalformed` rather than an unparseable header.

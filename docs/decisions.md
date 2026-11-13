@@ -94,6 +94,7 @@ review.
 | E13 | Only `internal/tgclient` imports gotd. Only `internal/storage` imports the SQLite driver. `internal/wire`, `internal/crypto/format` and `internal/domain` import the standard library only | Formats stay testable without a network or a database |
 | E14 | The root module builds with **`CGO_ENABLED=0`**. The Fyne GUI and the transform worker are **separate Go modules** under `apps/`, joined by `go.work` | Fyne needs OpenGL through cgo and libvips needs cgo. The server must stay a static binary |
 | E15 | The server key fingerprint is written everywhere as **`bkf1_` followed by the 32 lowercase hex characters** of its 16 bytes. The owner chose this on 2026-11-13, before the phase 02 format freeze | wire-format.md and storage-model.md used this form while operations.md and security.md used 22-character base64url. The `kfp` wire field is frozen by phase 02, so one form had to win, and the versioned prefix is self-describing |
+| E16 | **Two TDX1 parser clarifications, frozen with the phase 02 format gate.** A present but empty `t=` is `ErrWireMalformed` (a `malformed` reject), not an unknown op. Binary values (`wrap`, `check`) must be canonical unpadded base64url with no CR or LF. The owner signed off on 2026-11-13 | `replay_log.op_type` is `CHECK (length(op_type) > 0)`, so an empty type recorded as an unknown op would fail the projector's page transaction. Lenient base64 let two different raw headers project to the same op |
 
 ---
 
