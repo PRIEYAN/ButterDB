@@ -1,0 +1,16 @@
+/butterdbd
+/dist/
+/bin/
+*.test
+*.out
+*.prof
+coverage.*
+go.work.sum.tmp
+.DS_Store
+/.idea/
+/.vscode/
+*.swp
+*.db
+*.db-wal
+*.db-shm
+*.bdsnap

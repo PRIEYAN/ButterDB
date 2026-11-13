@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+message_file="$1"
+lines="$(grep -v '^#' "$message_file" | sed -e 's/[[:space:]]*$//' | sed -e '/./,$!d' | sed -e ':a' -e '/^\n*$/{$d;N;ba' -e '}')"
+
+fail() {
+	printf 'butterdb: commit message rejected: %s\n' "$1" >&2
+	printf 'butterdb: use one lowercase line of simple english, see docs/claude.md section 12\n' >&2
+	exit 1
+}
+
+if [ -z "$lines" ]; then
+	fail "empty message"
+fi
+
+line_count="$(printf '%s\n' "$lines" | wc -l | tr -d ' ')"
+if [ "$line_count" -ne 1 ]; then
+	fail "more than one line; bodies and trailers are not allowed"
+fi
+
+subject="$lines"
+
+if [ "${#subject}" -gt 72 ]; then
+	fail "longer than 72 characters"
+fi
+if printf '%s' "$subject" | grep -q '[A-Z]'; then
+	fail "contains an upper case letter"
+fi
+if printf '%s' "$subject" | grep -q '\.$'; then
+	fail "ends with a period"
+fi
+if printf '%s' "$subject" | grep -qE '^[a-z]+(\([^)]*\))?!?: '; then
+	fail "starts with a scope prefix"
+fi
+if printf '%s' "$subject" | grep -qiE '(co-authored-by|signed-off-by|generated with|cherry picked from)'; then
+	fail "contains a trailer or footer"
+fi
+if printf '%s' "$subject" | grep -qE '(^|[[:space:]])#[0-9]+'; then
+	fail "contains an issue reference"
+fi

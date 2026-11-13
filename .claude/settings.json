@@ -1,0 +1,13 @@
+{
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "additionalDirectories": ["../butterdb-wt", "../TDrive"],
+    "deny": ["Bash(git push:*)", "Bash(git -C * push:*)"],
+    "allow": [
+      "Bash(go build:*)", "Bash(go vet:*)", "Bash(go test:*)", "Bash(go list:*)",
+      "Bash(gofmt:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+      "Bash(git show:*)", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git -C:*)",
+      "Bash(scripts/layering.sh)", "Bash(scripts/nocomments.sh)", "Bash(scripts/verify.sh)"
+    ]
+  }
+}
