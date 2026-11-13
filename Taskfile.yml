@@ -1,0 +1,59 @@
+version: '3'
+
+env:
+  GOTOOLCHAIN: local
+
+tasks:
+  build:
+    env:
+      GOWORK: 'off'
+      CGO_ENABLED: '0'
+    cmds:
+      - go build -trimpath -mod=readonly -o bin/butterdbd ./cmd/butterdbd
+
+  test:
+    env:
+      GOWORK: 'off'
+      CGO_ENABLED: '0'
+    cmds:
+      - go test -mod=readonly -count=1 ./...
+
+  race:
+    env:
+      GOWORK: 'off'
+      CGO_ENABLED: '1'
+    cmds:
+      - go test -mod=readonly -race -count=1 ./internal/...
+
+  layering:
+    cmds:
+      - bash scripts/layering.sh
+
+  nocomments:
+    cmds:
+      - bash scripts/nocomments.sh
+
+  tools:
+    cmds:
+      - bash scripts/test/run.sh
+
+  verify:
+    cmds:
+      - bash scripts/verify.sh
+
+  gui:
+    env:
+      CGO_ENABLED: '1'
+    cmds:
+      - go -C apps/admin build -mod=readonly -o ../../bin/butterdb-admin .
+
+  worker:
+    env:
+      CGO_ENABLED: '1'
+    cmds:
+      - go -C apps/transformd build -mod=readonly -o ../../bin/butterdb-transformd .
+
+  image:
+    cmds:
+      - docker build -f deploy/Dockerfile -t butterdbd .
+      - docker build -f deploy/transformd/Dockerfile -t butterdb-transformd .
