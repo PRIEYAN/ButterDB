@@ -3,10 +3,15 @@ set -euo pipefail
 
 test_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 scripts_dir="$(cd "$test_dir/.." && pwd -P)"
-fixtures="$test_dir/fixtures"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+fixtures="$work/fixtures"
+cp -R "$test_dir/fixtures" "$fixtures"
+while IFS= read -r inert; do
+	mv "$inert" "${inert%.fixture}"
+done < <(find "$fixtures" -name '*.fixture')
 
 passed=0
 failed=0
