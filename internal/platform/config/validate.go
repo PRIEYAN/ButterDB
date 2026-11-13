@@ -23,7 +23,7 @@ func (l *loader) validate() {
 func validateField(f field) string {
 	switch f.kind {
 	case kindPath:
-		return validatePath(f.value.String())
+		return validatePath(f.value.String(), f.tag)
 	case kindAddress:
 		return validateAddress(f.value.String())
 	}
@@ -33,8 +33,8 @@ func validateField(f field) string {
 	return validateByType(f)
 }
 
-func validatePath(value string) string {
-	if value == "" || filepath.IsAbs(value) {
+func validatePath(value string, tag reflect.StructTag) string {
+	if value == "" && tag.Get("optional") == "true" || filepath.IsAbs(value) {
 		return ""
 	}
 	return "must be an absolute path"

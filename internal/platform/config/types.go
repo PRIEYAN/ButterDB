@@ -29,8 +29,8 @@ type S3Config struct {
 	Region                   string   `toml:"region"`
 	BaseDomains              []string `toml:"base_domains"`
 	TLSMode                  string   `toml:"tls_mode" enum:"none,files"`
-	TLSCertFile              string   `toml:"tls_cert_file" kind:"path"`
-	TLSKeyFile               string   `toml:"tls_key_file" kind:"path"`
+	TLSCertFile              string   `toml:"tls_cert_file" kind:"path" optional:"true"`
+	TLSKeyFile               string   `toml:"tls_key_file" kind:"path" optional:"true"`
 	TrustedProxies           []string `toml:"trusted_proxies"`
 	RequestBudget            Duration `toml:"request_budget"`
 	BodyIdleTimeout          Duration `toml:"body_idle_timeout"`
@@ -56,8 +56,8 @@ type IngestConfig struct {
 type AdminConfig struct {
 	Listen             string   `toml:"listen" kind:"address"`
 	TLSMode            string   `toml:"tls_mode" enum:"self-signed,files,proxy"`
-	TLSCertFile        string   `toml:"tls_cert_file" kind:"path"`
-	TLSKeyFile         string   `toml:"tls_key_file" kind:"path"`
+	TLSCertFile        string   `toml:"tls_cert_file" kind:"path" optional:"true"`
+	TLSKeyFile         string   `toml:"tls_key_file" kind:"path" optional:"true"`
 	Hostnames          []string `toml:"hostnames"`
 	TrustedProxies     []string `toml:"trusted_proxies"`
 	ControlSocket      string   `toml:"control_socket" kind:"path"`
@@ -75,7 +75,7 @@ type MediaConfig struct {
 	Hostnames              []string `toml:"hostnames"`
 	TrustedProxies         []string `toml:"trusted_proxies"`
 	SigningKeyFile         string   `toml:"signing_key_file" kind:"path"`
-	SigningKeyPreviousFile string   `toml:"signing_key_previous_file" kind:"path"`
+	SigningKeyPreviousFile string   `toml:"signing_key_previous_file" kind:"path" optional:"true"`
 	PrivateMaxExpiry       Duration `toml:"private_max_expiry"`
 	WidthLadder            []int    `toml:"width_ladder"`
 	WorkerMode             string   `toml:"worker_mode" enum:"spawn,external"`
@@ -111,7 +111,7 @@ type MediaConfig struct {
 type OpsConfig struct {
 	Listen                      string   `toml:"listen" kind:"address"`
 	Hostnames                   []string `toml:"hostnames"`
-	MetricsTokenFile            string   `toml:"metrics_token_file" kind:"path"`
+	MetricsTokenFile            string   `toml:"metrics_token_file" kind:"path" optional:"true"`
 	AllowUnauthenticatedMetrics bool     `toml:"allow_unauthenticated_metrics"`
 	ReadyWhenDegraded           bool     `toml:"ready_when_degraded"`
 }

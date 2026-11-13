@@ -175,7 +175,8 @@ func keyCases() []keyCase {
 	badSize := []string{"0", "-1", "20GB", "1.5GiB", "abc"}
 	badBool := []string{"yes", "1", "TRUE"}
 	badAddress := []string{"nocolon", "host:0", "host:70000", "host:http"}
-	badPath := []string{"relative/path", "~/key"}
+	optionalBad := []string{"relative/path", "~/key"}
+	badPath := append([]string{""}, optionalBad...)
 	return []keyCase{
 		{"data_dir", "/var/lib/butterdb", badPath, []string{"/srv/x"}},
 		{"server_key_file", "/etc/butterdb/server.key", badPath, nil},
@@ -188,8 +189,8 @@ func keyCases() []keyCase {
 		{"s3.region", "us-east-1", nil, nil},
 		{"s3.base_domains", "", []string{"a,,b"}, []string{"s3.example.com"}},
 		{"s3.tls_mode", "none", []string{"auto"}, []string{"files"}},
-		{"s3.tls_cert_file", "", badPath, nil},
-		{"s3.tls_key_file", "", badPath, nil},
+		{"s3.tls_cert_file", "", optionalBad, []string{""}},
+		{"s3.tls_key_file", "", optionalBad, []string{""}},
 		{"s3.trusted_proxies", proxies, []string{"a,,b"}, nil},
 		{"s3.request_budget", "30s", badDuration, []string{"1m"}},
 		{"s3.body_idle_timeout", "60s", badDuration, nil},
@@ -209,8 +210,8 @@ func keyCases() []keyCase {
 		{"ingest.max_concurrent_puts_per_key", "2", []string{"0", "65"}, []string{"1", "64"}},
 		{"admin.listen", "0.0.0.0:9443", badAddress, nil},
 		{"admin.tls_mode", "self-signed", []string{"none"}, []string{"files", "proxy"}},
-		{"admin.tls_cert_file", "", badPath, nil},
-		{"admin.tls_key_file", "", badPath, nil},
+		{"admin.tls_cert_file", "", optionalBad, []string{""}},
+		{"admin.tls_key_file", "", optionalBad, []string{""}},
 		{"admin.hostnames", "", []string{"a,,b"}, nil},
 		{"admin.trusted_proxies", proxies, []string{"a,,b"}, nil},
 		{"admin.control_socket", "/var/lib/butterdb/admin.sock", badPath, nil},
@@ -225,7 +226,7 @@ func keyCases() []keyCase {
 		{"media.hostnames", "", []string{"a,,b"}, nil},
 		{"media.trusted_proxies", proxies, []string{"a,,b"}, nil},
 		{"media.signing_key_file", "/var/lib/butterdb/secrets/media_signing.key", badPath, nil},
-		{"media.signing_key_previous_file", "", badPath, nil},
+		{"media.signing_key_previous_file", "", optionalBad, []string{""}},
 		{"media.private_max_expiry", "168h", badDuration, nil},
 		{"media.width_ladder", strings.Join(ladderStrings(defaultWidthLadder()), ","), []string{"", "5,3", "0,4", "4,4", "a"}, []string{"16,32"}},
 		{"media.worker_mode", "spawn", []string{"inline"}, []string{"external"}},
@@ -258,7 +259,7 @@ func keyCases() []keyCase {
 		{"media.avif_auto_max_pixels", "4194304", []string{"0"}, nil},
 		{"ops.listen", "127.0.0.1:9090", badAddress, nil},
 		{"ops.hostnames", "", []string{"a,,b"}, nil},
-		{"ops.metrics_token_file", "", badPath, nil},
+		{"ops.metrics_token_file", "", optionalBad, []string{""}},
 		{"ops.allow_unauthenticated_metrics", "false", badBool, []string{"true"}},
 		{"ops.ready_when_degraded", "true", badBool, []string{"false"}},
 		{"telegram.app_file", "/var/lib/butterdb/secrets/telegram_app.json", badPath, nil},
