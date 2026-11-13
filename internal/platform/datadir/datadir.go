@@ -24,9 +24,8 @@ var (
 	ErrForeignOwner  = errors.New("datadir: directory is not owned by the process user")
 )
 
-var ownedTempPrefixes = [...]string{
-	"butterdb-spool-",
-	"butterdb-part-",
+func ownedTempPrefixes() []string {
+	return []string{"butterdb-spool-", "butterdb-part-"}
 }
 
 type Dir struct {
@@ -88,7 +87,7 @@ func (d *Dir) CleanupCacheTemps() error {
 }
 
 func isOwnedTemp(name string) bool {
-	for _, prefix := range ownedTempPrefixes {
+	for _, prefix := range ownedTempPrefixes() {
 		if strings.HasPrefix(name, prefix) {
 			return true
 		}
