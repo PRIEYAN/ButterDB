@@ -424,7 +424,7 @@ warning s3.public_url    empty; presigned URLs are unavailable
 check-config: 1 error, 1 warning
 ```
 
-With `--json`: `{"ok": false, "findings": [{"severity": "error", "key": "server_key_file", "message": "…"}], "kek_fingerprint": "Hx3ZfP76d3p7TxUkGr9XvQ"}`.
+With `--json`: `{"ok": false, "findings": [{"severity": "error", "key": "server_key_file", "message": "…"}], "kek_fingerprint": "bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6"}`.
 The fingerprint is printed when the key file is readable, so an operator can
 verify a backup copy against `state.json` (§9.6). Exit codes follow §4.2.
 
@@ -492,7 +492,7 @@ directory (`internal/platform/fsx`), so no computed path can escape it
 
 `state.json` is specified by [storage-model.md](storage-model.md) §4.3: fields
 `version`, `deployment_id`, `primary_user_id`, `registry.{channel_id,
-access_hash, marker_msg_id}`, `kek_fingerprint` (base64url of the 16-byte key
+access_hash, marker_msg_id}`, `kek_fingerprint` (`bkf1_` plus the hex of the 16-byte key
 fingerprint, §5.2), `format_version`, `created_at`. Unknown fields are rejected
 on load, so operations state is not kept there.
 
@@ -574,8 +574,8 @@ or `openssl rand -out server.key 32`. Off-host text backups use base64
 
 The first 16 bytes of
 `HKDF-SHA256(ikm = key, salt = empty, info = "butterdb/keyring/fingerprint/v1")`
-([storage-model.md](storage-model.md) §8.1), written everywhere as base64url
-without padding (22 characters, for example `Hx3ZfP76d3p7TxUkGr9XvQ`). It is
+([storage-model.md](storage-model.md) §8.1), written everywhere as `bkf1_` followed by
+the 32 lowercase hex characters of those bytes (37 characters, for example `bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6`, E15). It is
 logged at `INFO` on every start as `kek_fingerprint`, stored in `state.json`
 (`kek_fingerprint`), carried by `t=reg` and `t=encfg` (`kfp`), and written into
 every snapshot manifest and ops-channel caption.
@@ -585,7 +585,7 @@ every snapshot manifest and ops-channel caption.
 | Situation at `serve` start | Action |
 | --- | --- |
 | Key file present | Load and verify (§7.1 step 5) |
-| Key file absent, no `state.json`, no linked primary in `control.db` | Generate with `crypto/rand`, write through `secretfile` (`0600`), log one `WARN` line `{"msg":"server key generated","path":"…","kek_fingerprint":"Hx3ZfP76d3p7TxUkGr9XvQ","action":"back this file up off the host now"}` |
+| Key file absent, no `state.json`, no linked primary in `control.db` | Generate with `crypto/rand`, write through `secretfile` (`0600`), log one `WARN` line `{"msg":"server key generated","path":"…","kek_fingerprint":"bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6","action":"back this file up off the host now"}` |
 | Key file absent, `state.json` present | Exit 4: the deployment exists and its key is missing ([security.md](security.md) §5.7) |
 | Key file absent and its directory is read-only (systemd credential, Kubernetes secret) | Exit 4 with the hint `create it with butterdbd setup --key-only` |
 
@@ -823,7 +823,7 @@ caches. Default (owner may change).
   "server_id": "…",
   "binary_version": "0.1.0",
   "schema": {"projection": 1, "control": 1},
-  "kek_fingerprint": "Hx3ZfP76d3p7TxUkGr9XvQ",
+  "kek_fingerprint": "bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6",
   "deployment_id": "6pzyoxbfwcf6ubwcq5gpvjg5c4",
   "registry_channel_id": 2045100001,
   "members": [

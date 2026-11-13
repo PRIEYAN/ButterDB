@@ -450,7 +450,7 @@ caches. Default (owner may change).
   "server_id": "…",
   "binary_version": "0.1.0",
   "schema": {"projection": 1, "control": 1},
-  "kek_fingerprint": "Hx3ZfP76d3p7TxUkGr9XvQ",
+  "kek_fingerprint": "bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6",
   "deployment_id": "6pzyoxbfwcf6ubwcq5gpvjg5c4",
   "registry_channel_id": 2045100001,
   "members": [

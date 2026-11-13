@@ -629,7 +629,7 @@ warning s3.public_url    empty; presigned URLs are unavailable
 check-config: 1 error, 1 warning
 ```
 
-With `--json`: `{"ok": false, "findings": [{"severity": "error", "key": "server_key_file", "message": "…"}], "kek_fingerprint": "Hx3ZfP76d3p7TxUkGr9XvQ"}`.
+With `--json`: `{"ok": false, "findings": [{"severity": "error", "key": "server_key_file", "message": "…"}], "kek_fingerprint": "bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6"}`.
 The fingerprint is printed when the key file is readable, so an operator can
 verify a backup copy against `state.json` (§9.6). Exit codes follow §4.2.
 

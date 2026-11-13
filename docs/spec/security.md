@@ -203,7 +203,7 @@ restates it and adds the keys that protect local state.
 
 ```mermaid
 flowchart LR
-    F[Server key file<br/>32 random bytes] --> FP[fingerprint<br/>16 bytes, base64url]
+    F[Server key file<br/>32 random bytes] --> FP[fingerprint<br/>16 bytes, bkf1_ + hex]
     F --> KW[K_wrap] --> W[wrap and unwrap bucket DEKs<br/>t=encfg, aad = bucket + kid]
     W --> DEK[Bucket DEK per kid] --> FK[per-object file key<br/>HKDF + file salt] --> T[TDE1 chunks]
     F --> KS[K_secret] --> AK[sealed access-key secrets<br/>control.db]
@@ -221,7 +221,7 @@ them.
 
 | Name | `info` | Use | Owner |
 | --- | --- | --- | --- |
-| Fingerprint | `butterdb/keyring/fingerprint/v1`, first 16 bytes | Identifies the key in `state.json` (`kek_fingerprint`), `t=reg` and `t=encfg` (`kfp`), snapshot manifests, ops-channel captions and logs. Written as base64url without padding, 22 characters | [storage-model.md](storage-model.md) §8.1 |
+| Fingerprint | `butterdb/keyring/fingerprint/v1`, first 16 bytes | Identifies the key in `state.json` (`kek_fingerprint`), `t=reg` and `t=encfg` (`kfp`), snapshot manifests, ops-channel captions and logs. Written as `bkf1_` followed by 32 lowercase hex characters (E15) | [storage-model.md](storage-model.md) §8.1 |
 | `K_wrap` | `butterdb/keyring/dek-wrap/v1` | Wraps bucket DEKs | [storage-model.md](storage-model.md) §8.1 |
 | `K_secret` | `butterdb/keyring/access-key-secret/v1` | Seals access-key secrets (§6) | [storage-model.md](storage-model.md) §8.1 |
 | `K_session` | `butterdb/keyring/session-seal/v1` | Seals Telegram session files (§5.4). Default (owner may change) | this document |
@@ -765,7 +765,7 @@ phase's verification list maps them.
 | `TestProcessLockSecondInstance` | `internal/platform/processlock` | 01 | A second `serve` exits 3 |
 | `TestTDE1TamperAndTruncation` | `internal/crypto/randomaccess` | 03 | Flipped byte fails the touched chunk; truncated tail fails open |
 | `TestPersistedSaltReproducesCiphertext` | `internal/crypto/stream` | 03 | E8 |
-| `TestKeyringDerivationsDistinct` | `internal/crypto/keyring` | 03 | Every `info` yields a different subkey; fingerprint is 16 bytes, 22 base64url characters; a key file of 31 or 33 bytes is refused |
+| `TestKeyringDerivationsDistinct` | `internal/crypto/keyring` | 03 | Every `info` yields a different subkey; fingerprint is 16 bytes, written as `bkf1_` plus 32 lowercase hex characters; a key file of 31 or 33 bytes is refused |
 | `TestWrappedDEKBoundToBucket` | `internal/crypto/keyring` | 03 | Unwrap with another channel ID or another `kid` fails; a wrong key check fails `ErrDEKCheck` |
 | `TestKeyCopiesCleared` | `internal/crypto/keyring` | 03 | `Clear` zeroes; error paths clear |
 | `TestSessionFileSealed` | `internal/identity` | 04 | The session file contains no gotd auth key bytes; opening with another server key fails |
