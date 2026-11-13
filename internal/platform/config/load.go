@@ -4,14 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
-
-var lastKeyPattern = regexp.MustCompile(`\(last key "([^"]+)"\)`)
 
 var ErrInvalid = errors.New("config: invalid configuration")
 
@@ -86,10 +83,20 @@ func decodeErrorKey(err error) string {
 	if errors.As(err, &parseErr) && parseErr.LastKey != "" {
 		return parseErr.LastKey
 	}
-	if match := lastKeyPattern.FindStringSubmatch(err.Error()); match != nil {
-		return match[1]
+	return lastKeyInMessage(err.Error())
+}
+
+func lastKeyInMessage(message string) string {
+	const marker = `(last key "`
+	_, rest, found := strings.Cut(message, marker)
+	if !found {
+		return "config"
 	}
-	return "config"
+	key, _, closed := strings.Cut(rest, `")`)
+	if !closed {
+		return "config"
+	}
+	return key
 }
 
 func decodeErrorMessage(err error) string {

@@ -12,16 +12,6 @@ type Duration time.Duration
 
 type ByteSize int64
 
-var byteSizeSuffixes = []struct {
-	suffix     string
-	multiplier int64
-}{
-	{"KiB", 1 << 10},
-	{"MiB", 1 << 20},
-	{"GiB", 1 << 30},
-	{"TiB", 1 << 40},
-}
-
 func (d *Duration) UnmarshalText(b []byte) error {
 	parsed, err := time.ParseDuration(string(b))
 	if err != nil {
@@ -62,7 +52,16 @@ func (s ByteSize) Int64() int64 {
 }
 
 func splitByteSize(text string) (string, int64) {
-	for _, entry := range byteSizeSuffixes {
+	suffixes := [...]struct {
+		suffix     string
+		multiplier int64
+	}{
+		{"KiB", 1 << 10},
+		{"MiB", 1 << 20},
+		{"GiB", 1 << 30},
+		{"TiB", 1 << 40},
+	}
+	for _, entry := range suffixes {
 		if strings.HasSuffix(text, entry.suffix) {
 			return strings.TrimSuffix(text, entry.suffix), entry.multiplier
 		}

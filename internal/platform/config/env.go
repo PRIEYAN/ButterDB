@@ -12,18 +12,10 @@ const (
 	configPathVariable = "BUTTERDB_CONFIG"
 )
 
-var reservedEnvPrefixes = []string{"BUTTERDB_TGTEST", "BUTTERDB_S3COMPAT_"}
-
 func isReservedEnv(name string) bool {
-	if name == configPathVariable {
-		return true
-	}
-	for _, prefix := range reservedEnvPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
+	return name == configPathVariable ||
+		strings.HasPrefix(name, "BUTTERDB_TGTEST") ||
+		strings.HasPrefix(name, "BUTTERDB_S3COMPAT_")
 }
 
 func parseEnviron(environ []string) map[string]string {
