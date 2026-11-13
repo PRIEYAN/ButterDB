@@ -7,7 +7,7 @@ Implement foundation and guardrails as the next strictly sequential butterDB pha
 
 ## 2. Entry criteria
 
-The foundation documents have been reviewed and the owner has selected a project license.
+The foundation documents have been reviewed. The owner has chosen the project license (owner gate A10) before the prelude commits `LICENSE`.
 Use the owner gates in section 8 before moving main.
 
 ## 3. Read before starting
@@ -37,9 +37,17 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — platform
 
-Implement platform: internal/platform/{datadir,processlock,secretfile,clock,fsx} (port TDrive backend/datadir, backend/processlock, backend/auth/private_file.go). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Provide the platform primitives every later package depends on: data-directory resolution with mode enforcement, the single-instance process lock, the atomic private-file writer for secrets, and the clock and filesystem ports.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/platform/datadir/`, `internal/platform/processlock/`, `internal/platform/secretfile/`, `internal/platform/clock/`, `internal/platform/fsx/`.
+
+**Read.** `docs/spec/operations.md` §3.1–§3.2 (layout and modes), §6 (single instance); `docs/spec/security.md` §16 (phase 01 rows); `docs/claude.md` (no ambient state: time and filesystem are ports); legacy spec `docs/butterDBCore.md` lines 684–730 (secret-file primitive).
+
+**Rules.**
+- The data directory must be `0700`; a looser mode refuses start (`TestDataDirRefusesLooseMode`). There is no environment-variable configuration beyond what `internal/platform/config` defines.
+- `secretfile.Write` creates the temp file in the same directory, chmods it `0600` **before** the first byte, writes, syncs, closes, renames and fsyncs the directory. A failure leaves the old file intact and removes the temp file. It never creates an empty session file.
+- The process lock is an OS exclusive lock on `butterdbd.lock.guard`, plus `butterdbd.lock` holding role and PID diagnostics. Neither file is deleted on release. A second `serve` exits with code 3. Windows files are not ported (operations §6).
+- `clock.Clock` has `Now() time.Time`, plus a fake for tests. `fsx.FS` is the narrow filesystem port that later lanes use for temp files, renames and stats. Neither package keeps global state.
 
 Verified source instructions for this lane:
 
@@ -51,18 +59,37 @@ Verified source instructions for this lane:
 | `backend/processlock/process_unix.go` | 13 | PORT | `internal/platform/processlock` (L1) | Process liveness check |
 | `backend/auth/private_file.go` | 95 | PORT | `internal/platform/secretfile` (L1) | Keep: create temp in the target directory, `chmod 0o600` before writing, write, check short write, `fsync`, close, rename, `fsync` the directory (skipped on Windows); remove the temp on every failure path; directory mode `0o700`. Change: rename function injected, no package variable |
 
-Commit this lane as `implement phase 01 platform` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/datadir/datadir.go`: `func Set(dir string) {`; `func SetCache(dir string) {`; `func Dir() (string, error) {`; `func CacheDir() (string, error) {`; `func CreateCacheTemp(pattern string) (*os.File, error) {`; `func CleanupCacheTemps() error {`
 - `backend/processlock/lock.go`: `type Info struct {`; `type Lock struct {`; `func Acquire(role string) (*Lock, error) {`; `func (l *Lock) Release() error {`; `func (l *Lock) Info() Info {`; `func Path() (string, error) {`; `func Read() (Info, error) {`; `func ReadActive() (Info, bool, error) {`
 
+**Tests (binding names).** every carried TDrive case in this phase's regression table (datadir three cases, processlock all but `TestAcquireReclaimsLegacyRecordNamingOwnPID`, owner-process helper tests, the three private-file cases), plus `TestSecretFileModeBeforeWrite`, `TestDataDirRefusesLooseMode`, `TestProcessLockSecondInstance` (security §16).
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/platform/datadir/... ./internal/platform/processlock/... ./internal/platform/secretfile/... ./internal/platform/clock/... ./internal/platform/fsx/...
+go test -mod=readonly -race ./internal/platform/datadir/... ./internal/platform/processlock/... ./internal/platform/secretfile/... ./internal/platform/clock/... ./internal/platform/fsx/...
+gofmt -l internal/platform/datadir internal/platform/processlock internal/platform/secretfile internal/platform/clock internal/platform/fsx
+```
+
+**Commits.** `add data directory resolution and mode checks`, `add atomic private secret file writer`, `add process lock with guard file`, `add clock and filesystem ports`.
+
 ### 5.2 Lane L2 — config and logging
 
-Implement config and logging: internal/platform/{config,logging}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Load configuration from the TOML file with `BUTTERDB_*` environment overrides, validate every key, read secrets only from files, and provide JSON structured logging with redaction.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/platform/config/`, `internal/platform/logging/`.
+
+**Read.** `docs/spec/operations.md` §2.1–§2.8 (sources, types, env naming, every key, secret files, example, the §2.7 Go contract, `check-config`), §14.1–§14.4 (log format, standard fields, levels, redaction); `docs/spec/security.md` §16 row `TestConfigRejectsUnknownKeyAndEnv`.
+
+Implement the operations §2.7 contract exactly. Logging exposes `func New(w io.Writer, level slog.Level) *slog.Logger` plus the redaction helpers that §14.4 names.
+
+**Rules.**
+- Precedence is file, then environment. Unknown keys and unknown `BUTTERDB_*` variables are errors. No key or variable may carry an inline secret; secrets come only through `*_file` paths.
+- Every key in operations §2.4 has the documented type, range and default. Durations use Go syntax.
+- Log lines are JSON `log/slog` with the §14.2 standard fields. Redaction covers tokens, secrets, api_hash, phone numbers (masked), passwords and session bytes. Redaction happens at the value type (`LogValue`), never by string search.
 
 Verified source instructions for this lane:
 
@@ -70,17 +97,50 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/applog/applog.go` | 105 | PATTERN-ONLY | `internal/platform/logging` (L2) | TDrive sets a global debug text handler writing to a file. butterDB builds a JSON `slog.Handler` on stdout, returns a `*slog.Logger`, never calls `slog.SetDefault` |
 
-Commit this lane as `implement phase 01 config and logging` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/applog/applog.go`: `func Init() {`; `func Close() {`
 
+**Tests (binding names).** `TestConfigRejectsUnknownKeyAndEnv`, `TestPrecedenceFileThenEnv`, `TestEveryKeyHasDefaultAndRange` (table over operations §2.4), `TestSecretsOnlyFromFiles`, `TestExampleFileParses` (the §2.6 example), `TestDurationAndSizeParsing`, `TestLogStandardFields`, `TestRedactionByType`, `TestPhoneMasked`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/platform/config/... ./internal/platform/logging/...
+go test -mod=readonly -race ./internal/platform/config/... ./internal/platform/logging/...
+gofmt -l internal/platform/config internal/platform/logging
+```
+
+**Commits.** `add configuration loading with environment overrides`, `add structured logging with redaction`.
+
 ### 5.3 Lane L3 — lifecycle and errors
 
-Implement lifecycle and errors: internal/lifecycle, internal/domain/{errs,limits}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Provide the lifecycle group that starts components in order and closes them in strict reverse, the domain error sentinels with their stable codes, and the single file of size and count limits.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/lifecycle/`, `internal/domain/errs/`, `internal/domain/limits/`.
+
+**Read.** `docs/claude.md` (lifecycle and error rules); `docs/spec/storage-model.md` §7 (limits arithmetic); `docs/spec/s3-api.md` §14.2 and `docs/spec/admin-api.md` §4.2 (the codes the sentinels map to); `docs/spec/schema.md` and `docs/spec/wire-format.md` §6 (length limits).
+
+```go
+package lifecycle
+
+type Component interface {
+	Start(ctx context.Context) error
+	Close(ctx context.Context) error
+}
+
+func NewGroup(closeTimeout time.Duration) *Group
+func (g *Group) Add(name string, c Component)
+func (g *Group) Start(ctx context.Context) error
+func (g *Group) Close(ctx context.Context) error
+```
+
+`errs` exposes sentinel `error` values plus `func Code(err error) string`. `limits` exposes only constants, including `MaxStoredObjectBytes = 1900 * 1024 * 1024`.
+
+**Rules.**
+- If `Start` fails partway, already-started components are closed in reverse order. Each `Close` gets a bounded context.
+- Every sentinel has exactly one stable code string, and `Code` unwraps with `errors.Is`. `internal/domain/...` imports the standard library only.
+- Every limit used anywhere in the code lives in `limits`. No other package may redefine a threshold (claude.md).
 
 Verified source instructions for this lane:
 
@@ -90,21 +150,50 @@ Verified source instructions for this lane:
 | `internal/app/operation.go` | 203 | PATTERN-ONLY | `internal/domain/errs` (L3) | Stable snake_case error codes carried on a typed error (`not_found`, `permission_denied`, `already_exists`, `canceled`, `deadline_exceeded`). butterDB defines its own code set |
 | `backend/daemon/server.go` | 193 | PATTERN-ONLY | `internal/lifecycle` (L3), `internal/core` (integration) | `Run` acquires the process lock, starts logging, builds the engine, opens the listener, and releases in reverse through `defer`. butterDB makes this explicit with `lifecycle.Group` and the close order in `docs/claude.md` §6.5 |
 
-Commit this lane as `implement phase 01 lifecycle and errors` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/services/file/upload.go`: `func (s *Service) Upload(ctx context.Context, channelID int64, filePaths []string, parentIDs []string, encrypt bool) ([]Metadata, error) {`; `func (s *Service) CancelUpload(uploadID int) bool {`
 - `internal/app/operation.go`: `type OperationError struct {`; `func (e *OperationError) Error() string {`; `func (e *OperationError) Unwrap() error {`; `type OperationResult struct {`; `func (r OperationResult) Err() error {`; `type UploadResult struct {`; `type DownloadResult struct {`; `type ResumableDownloadsResult struct {`
 - `backend/daemon/server.go`: `type ServerConfig struct {`; `type Server struct {`; `func Run(ctx context.Context, cfg ServerConfig) error {`
 
+**Tests (binding names).** `TestGroupStartsInOrder`, `TestGroupClosesInReverse`, `TestStartFailureClosesStarted`, `TestCloseBoundedByContext`, `TestEverySentinelHasCode`, `TestCodesUnique`, `TestCodeUnwraps`, `TestLimitsMatchSpec` (1900 MiB, 1024-byte keys, 2048-byte user metadata, 10000 parts, 5 MiB minimum part).
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/lifecycle/... ./internal/domain/errs/... ./internal/domain/limits/...
+go test -mod=readonly -race ./internal/lifecycle/... ./internal/domain/errs/... ./internal/domain/limits/...
+gofmt -l internal/lifecycle internal/domain/errs internal/domain/limits
+```
+
+**Commits.** `add lifecycle group with reverse close`, `add domain error sentinels and limits`.
+
 ### 5.4 Lane L4 — tooling
 
-Implement tooling: scripts/{layering.sh,nocomments.sh,verify.sh,worktree-*.sh}, Taskfile.yml. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Write the repository guardrail scripts every later phase runs: the layering check, the comment-policy check, the one-command verifier, worktree helpers for the execution protocol, and the task runner file.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `scripts/layering.sh`, `scripts/nocomments.sh`, `scripts/verify.sh`, `scripts/worktree-create.sh`, `scripts/worktree-remove.sh`, `scripts/test/` (script tests and fixtures), `Taskfile.yml`. `scripts/hooks/` and `scripts/install-hooks.sh` belong to the prelude.
 
-Commit this lane as `implement phase 01 tooling` after its package tests pass.
+**Read.** `docs/claude.md` (layering rules and comment policy); `docs/phases/00-execution-protocol.md` (worktree paths, branch names, verification list); `docs/plan.md` (build commands).
+
+**Rules.**
+- `layering.sh` uses `go list -deps -json` and fails when: `internal/domain`, `internal/wire` or `internal/crypto/format` import outside the standard library; anything other than `internal/tgclient/...` imports `github.com/gotd/td`; anything other than `internal/storage/...` imports `modernc.org/sqlite`; `api/...` imports `internal/...`; or the root module imports `apps/...`. It prints every violation and exits 1.
+- `nocomments.sh` scans tracked `*.go` files and fails on two consecutive comment lines, any `/* */` block, `TODO` or `FIXME`, or commented-out code heuristics. It allows `//go:` directives, build tags and a single standalone line. It runs per module.
+- `verify.sh` runs `gofmt -l`, `go vet`, `go test -race` on the root module (with `GOWORK=off CGO_ENABLED=0`), then `layering.sh` and `nocomments.sh`, and exits non-zero on the first failure with a clear message.
+- Worktree scripts create and remove `../butterdb-wt/NN-<lane>` on `phase/NN-<slug>-<lane>` exactly as the protocol specifies. They never delete a branch that has unmerged commits.
+- Scripts are POSIX-friendly bash with `set -euo pipefail`, run on Linux and macOS, and need no network.
+
+**Tests (binding names).** `scripts/test/run.sh` must exercise fixture modules under `scripts/test/fixtures/`: a forbidden gotd import, a forbidden sqlite import, a domain package importing a third party, two-line and block comments, and an allowed `//go:build` line. Each fixture must produce the expected exit code and message. Cases: `layering_rejects_gotd_outside_tgclient`, `layering_rejects_sqlite_outside_storage`, `layering_rejects_domain_thirdparty`, `nocomments_rejects_two_lines`, `nocomments_rejects_block`, `nocomments_allows_directives`, `worktree_create_remove_roundtrip`.
+
+**Verify.**
+
+```bash
+bash -n scripts/*.sh scripts/test/*.sh
+bash scripts/test/run.sh
+shellcheck scripts/*.sh scripts/test/*.sh || echo 'shellcheck not installed'
+```
+
+**Commits.** `add layering and comment policy checks`, `add verify script and worktree helpers`, `add task runner file`.
 
 ## 6. Integration lane
 
@@ -132,7 +221,7 @@ Own `internal/core`, `cmd/`, and `test/acceptance/phase01` in the root module. C
 
 ## 8. Owner gates
 
-The owner chooses the project license before the phase is accepted.
+- **Project license (A10).** The owner chooses butterDB's license before the prelude commits the root `LICENSE`. A draft MIT `LICENSE` exists in the working tree but is not committed until the owner confirms it. TDrive's MIT attribution in `docs/legal/THIRD_PARTY_NOTICES.md` is carried whatever the choice.
 
 ## 9. Exit criteria and handoff
 
@@ -227,10 +316,7 @@ The source specification is authoritative. Update this copy in the same commit i
 | `s3.tls_cert_file` | `BUTTERDB_S3_TLS_CERT_FILE` | path | empty | PEM chain, `files` mode |
 | `s3.tls_key_file` | `BUTTERDB_S3_TLS_KEY_FILE` | path | empty | PEM key, `files` mode; a secret file (§2.5) |
 | `s3.trusted_proxies` | `BUTTERDB_S3_TRUSTED_PROXIES` | list | `["127.0.0.1/32", "::1/128"]` | CIDRs whose `X-Forwarded-For` is honoured |
-| `s3.commit_budget_base` | `BUTTERDB_S3_COMMIT_BUDGET_BASE` | duration | `5m` | Fixed part of the commit budget (A7) |
-| `s3.commit_budget_min_rate` | `BUTTERDB_S3_COMMIT_BUDGET_MIN_RATE` | int | `2097152` | Bytes per second of stored size added to the commit budget |
-| `s3.admission_wait` | `BUTTERDB_S3_ADMISSION_WAIT` | duration | `30s` | Longest wait for a put slot and spool reservation before `SlowDown` |
-| `s3.read_first_byte_budget` | `BUTTERDB_S3_READ_FIRST_BYTE_BUDGET` | duration | `60s` | Longest wait for the first body byte of a GET before `SlowDown` |
+| `s3.request_budget` | `BUTTERDB_S3_REQUEST_BUDGET` | duration | `30s` | Total time one S3 request may spend waiting on admission, the E10 send-rate limiter, Telegram flood waits and `getFile` slots before `503 SlowDown`; transfer time is not counted ([s3-api.md](s3-api.md) §12.1, A7) |
 | `s3.body_idle_timeout` | `BUTTERDB_S3_BODY_IDLE_TIMEOUT` | duration | `60s` | Longest gap between request body reads |
 | `s3.write_idle_timeout` | `BUTTERDB_S3_WRITE_IDLE_TIMEOUT` | duration | `60s` | Longest blocked response write |
 | `s3.keepalive_interval` | `BUTTERDB_S3_KEEPALIVE_INTERVAL` | duration | `15s` | Whitespace interval for long responses |

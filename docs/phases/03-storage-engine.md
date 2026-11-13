@@ -40,9 +40,17 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/projection/log
 
-Implement internal/projection/log. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port the single projection door: `ProjectFromOp` and `ProjectFromOpTx` write the replay log first, detect header tampering, record skippable rejects and op outcomes, and apply through the L2 registry, all in one transaction.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/projection/log/`.
+
+**Read.** `docs/spec/storage-model.md` §9.6 (tamper), §10 (the projector), §14 (invariants); `docs/spec/schema.md` §2.3, §4.2–§4.4, §4.12; `docs/spec/wire-format.md` §7.3 (an unknown op is skippable, E5); legacy `docs/butterDBCore.md` lines 1702–1868.
+
+**Rules.**
+- Identity is `(channel_id, msg_id)`. A second observation with the same hash is a no-op that reports `alreadySeen`. A different hash records a `replay_log_tamper` row and keeps the first op canonical.
+- Skippable apply errors (domain rejects, an unknown op) record `replay_log_rejects` and a `projection_operations` outcome without failing the transaction. SQL errors fail it.
+- The projector never reads the clock for domain state. `seen_at` uses the injected clock and is never used to apply ops.
+- `ProjectFromOpTx` participates in a caller's transaction so a sync page commits its ops, watermark and `pts` together. No network call ever happens inside it.
 
 Verified source instructions for this lane:
 
@@ -50,17 +58,36 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/projection/log.go` | 197 | PORT | `internal/projection/log` (L1) | Keep: `HashHeader` (SHA-256 hex of the raw header), `ProjectFromOp` (owns its transaction) and `ProjectFromOpTx` (joins the caller's), `alreadySeen` on a repeated `(channel_id, msg_id)`, tamper row when the hash differs while the first op stays canonical, skippable apply errors recorded as rejects so replay continues, other errors fail the transaction, `ChannelIsEmpty`, `ErrChannelNotEmpty`. Change: `*sql.Tx` becomes the prelude's `Tx` port; context on every call; `seen_at` and `detected_at` from the incoming message; `unknown_op` recorded as a reject with the raw header kept (E5); injected logger |
 
-Commit this lane as `implement phase 03 internal projection log` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/projection/log.go`: `func HashHeader(rawHeader string) string {`; `func ProjectFromOp(db *sql.DB, channelID int64, msgID int64, op Op, actorID int64, rawHeader string) (alreadySeen bool, err error) {`; `func ProjectFromOpTx(tx *sql.Tx, channelID int64, msgID int64, op Op, actorID int64, rawHeader string) (alreadySeen bool, err error) {`; `func ChannelIsEmpty(db *sql.DB, channelID int64) (bool, error) {`
 
+**Tests (binding names).** the six carried `backend/projection/log_test.go` cases, the carried `managed_messages_test.go` and `reconcile_test.go` cases, plus `TestUnknownOpRecordedSkippable`, `TestProjectorNeverReadsClock`, and `TestNoTxAcrossNetwork` (schema §9, shared with `jobrepo`).
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/projection/log/...
+go test -mod=readonly -race ./internal/projection/log/...
+gofmt -l internal/projection/log
+```
+
+**Commits.** `port projection log with tamper and reject recording`.
+
 ### 5.2 Lane L2 — internal/projection/apply
 
-Implement internal/projection/apply. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Implement one `Applier` per op type, registered in the prelude's `Registry`: object put with last-writer-wins, delete tombstones, bucket lifecycle and config, encryption config, and the registry marker.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/projection/apply/`.
+
+**Read.** `docs/spec/storage-model.md` §4.2 (marker), §5.2–§5.4 (bucket ops), §6.2–§6.5 (commit protocol, overwrite and delete), §8.3 (`t=encfg`); `docs/spec/wire-format.md` §5; `docs/spec/schema.md` §4.5–§4.16 and §6 (which tables an applier writes).
+
+**Rules.**
+- Put: the highest message ID for a key in a bucket wins (E3). Superseded body and put message IDs are queued in `pending_message_cleanup` in the same transaction.
+- Del: a tombstone records the delete's message ID. A put with a lower message ID for that key can never resurrect the object (E4).
+- Ops are bucket-scoped. A `put` in one bucket channel never affects another.
+- Appliers return domain sentinels for semantic rejects and plain errors for SQL failures, and never touch the replay log (that is L1's).
+- No clock reads. Timestamps come from the op.
 
 Verified source instructions for this lane:
 
@@ -69,18 +96,35 @@ Verified source instructions for this lane:
 | `backend/projection/apply.go` | 435 | PATTERN-ONLY | `internal/projection/apply` (L2) | TDrive's `ApplyOp` switch becomes a `Registry` of `Applier` values, one per op type (open/closed, `docs/claude.md` §7). Its skippable error classes (`ErrCycleRejected`, `ErrBadOp`, `ErrNameConflict`, `ErrRevisionConflict`) are replaced by object and bucket reject reasons |
 | `backend/projection/writable_apply.go` | 754 | PATTERN-ONLY | `internal/projection/apply` (L2) | `fcommit` makes a hidden body visible and records an outcome per operation ID in `projection_operations`; repeated publication of the same operation under a different message ID resolves to one outcome. The `put` applier follows this |
 
-Commit this lane as `implement phase 03 internal projection apply` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/projection/apply.go`: `func ApplyOp(tx *sql.Tx, channelID int64, msgID int64, op Op, actorID int64) (err error) {`
 - `backend/projection/writable_apply.go`: `func ProjectionOperationByID(db *sql.DB, channelID int64, opID string) (ProjectionOperation, bool, error) {`
 
+**Tests (binding names).** the pattern cases from `backend/projection/apply_test.go` as put idempotency, unknown-op reject and cross-bucket isolation, plus `TestPutLastWriterWins`, `TestSupersededQueuedForCleanup`, `TestTombstoneBlocksOlderPut`, `TestNewerPutAfterDeleteLives`, `TestBucketCreateConfigureDelete`, `TestEncfgStoresWrappedKey`, `TestRegistryMarkerRecorded`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/projection/apply/...
+go test -mod=readonly -race ./internal/projection/apply/...
+gofmt -l internal/projection/apply
+```
+
+**Commits.** `add object and bucket op appliers`, `add encryption config and registry marker appliers`.
+
 ### 5.3 Lane L3 — internal/projection/rebuild
 
-Implement internal/projection/rebuild. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Rebuild derived tables from the replay log without network access, in keyset batches, and repair a single key when ops arrive out of order (E6).
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/projection/rebuild/`.
+
+**Read.** `docs/spec/storage-model.md` §9.4 (per-key ordering repair), §12.1 (rebuild from the replay log); `docs/spec/schema.md` §7 (rebuild behaviour per table); `docs/spec/operations.md` §10.3; legacy `docs/butterDBCore.md` lines 1840–1868.
+
+**Rules.**
+- A full rebuild clears derived tables for a channel and replays `replay_log` in ascending message ID in batches of 256. It preserves `replay_log`, tamper and rejects. A replay failure rolls back.
+- Per-key repair re-applies only that key's ops in message-ID order. It triggers only when a newly ingested op has a lower message ID than an already-recorded op for the same key (E6).
+- A rebuild is byte-identical to incremental projection.
 
 Verified source instructions for this lane:
 
@@ -89,18 +133,36 @@ Verified source instructions for this lane:
 | `backend/projection/rebuild.go` | 170 | PORT | `internal/projection/rebuild` (L3) | Keep: clear derived state for one channel, replay `replay_log` ascending by `msg_id` in keyset batches of 256 (`rebuildReplayBatchSize`), one transaction rolled back as a whole on failure, channels isolated. Add: per-key repair that replays only the rows for one key (E6) |
 | `backend/projection/encryption_rebuild.go` | 113 | PORT-PARTIAL | `internal/projection/rebuild` (L3) | Rebuild of the `encfg` state from replay, rejecting tampered and malformed canonical headers. Drop password-config selection |
 
-Commit this lane as `implement phase 03 internal projection rebuild` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/projection/rebuild.go`: `func RebuildProjection(db *sql.DB, channelID int64) error {`; `func RebuildProjectionTx(tx *sql.Tx, channelID int64) (applied, rejected int, err error) {`
 - `backend/projection/encryption_rebuild.go`: `func RebuildEncryptionConfigFromReplay(db *sql.DB, channelID int64) (bool, error) {`
 
+**Tests (binding names).** the carried `backend/projection/rebuild_test.go` and `encryption_rebuild_test.go` cases, plus `TestRebuildEquivalence` (project N ops, snapshot, rebuild, compare every derived table), `TestPerKeyRepairOnlyTouchesKey`, `TestRepairNotTriggeredForOwnWritesAboveWatermark`, `TestRebuildPreservesReplayLog`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/projection/rebuild/...
+go test -mod=readonly -race ./internal/projection/rebuild/...
+gofmt -l internal/projection/rebuild
+```
+
+**Commits.** `port projection rebuild`, `add per key ordering repair`.
+
 ### 5.4 Lane L4 — internal/crypto/{stream,randomaccess} (port TDrive backend/crypto)
 
-Implement internal/crypto/{stream,randomaccess} (port TDrive backend/crypto). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port TDE1 encryption: the streaming encrypter and decrypter, an `EncryptingReaderAt` that reproduces identical ciphertext from persisted salt and nonce prefix (E8), and the authenticated random-access decryptor.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/crypto/stream/`, `internal/crypto/randomaccess/`.
+
+**Read.** `docs/spec/storage-model.md` §8.5 (determinism under retry); `docs/spec/security.md` §4; legacy `docs/butterDBCore.md` lines 2017–2222; phase 02 `internal/crypto/format` for all arithmetic.
+
+**Rules.**
+- Salt and nonce prefix are parameters, never drawn inside a retry path, so a resumed send reproduces the same bytes (E8). Randomness is injected for fresh encryptions.
+- `hkdfInfo` is `butterDB/file/v1`. Use XChaCha20-Poly1305 with no additional data and the final-chunk bit from `format`.
+- The random-access decryptor authenticates the final chunk at open and whole touched chunks per read. It may return authenticated bytes plus an error, retains only the file key, and `Close` zeroes it.
+- Bounded memory: one chunk buffer per read.
 
 Verified source instructions for this lane:
 
@@ -109,18 +171,37 @@ Verified source instructions for this lane:
 | `backend/crypto/stream.go` (`EncryptStream`, `DecryptStream`, `deriveSubkey`, `ensureNoExtraPlaintext`, `writeExact`) | 318 | PORT | `internal/crypto/stream` (L4) | Keep: HKDF-SHA256 32-byte per-file subkey from the 32-byte key and the file salt (`deriveSubkey`), XChaCha20-Poly1305 per 64 KiB chunk with the 24-byte nonce `prefix(20) ‖ counter_be32` and the final-chunk bit, `maxConsecutiveEmptyReads = 100`, rejection of trailing plaintext and length mismatch. Change: `hkdfInfo = "butterDB/file/v1"`; salt and nonce prefix are parameters (E8); randomness injected. Add: `EncryptingReaderAt`, new code with no TDrive source, which yields ciphertext at any offset from the DEK, salt, prefix and a plaintext `ReaderAt`, so a resumed send reproduces the same bytes |
 | `backend/crypto/random_access.go` | 413 | PORT | `internal/crypto/randomaccess` (L4) | Keep: `ContextReaderAt`, `NewRandomAccessDecryptor` (authenticates the final chunk on open), `Clone` (independent, no storage read), `ReadAt` (authenticates every chunk read), `Size`, `Close` (cancels blocked reads, then clears the key), `ErrCiphertextSize`, `ErrDecryptorClosed`, `ErrNilContext`. Offset arithmetic moved to `format` in phase 02 |
 
-Commit this lane as `implement phase 03 internal crypto stream randomaccess port tdri` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/crypto/stream.go`: `func ValidatePlaintextSize(plaintextSize int64) error {`; `func EncryptStream(src io.Reader, dst io.Writer, masterKey []byte, plaintextSize int64) error {`; `func CiphertextSize(plaintextSize int64) int64 {`; `func DecryptStream(src io.Reader, dst io.Writer, masterKey []byte) (int64, error) {`
 - `backend/crypto/random_access.go`: `type ContextReaderAt interface {`; `type RandomAccessDecryptor struct {`; `func NewRandomAccessDecryptor(`; `func (decryptor *RandomAccessDecryptor) Clone(source ContextReaderAt) (*RandomAccessDecryptor, error) {`; `func (decryptor *RandomAccessDecryptor) Size() int64 {`; `func (decryptor *RandomAccessDecryptor) ReadAt(`; `func (decryptor *RandomAccessDecryptor) Close() error {`; `func StoredOffset(plaintextOffset int64) (int64, bool) {`
 
+**Tests (binding names).** every carried case (`stream_test.go` all nine with regenerated vectors, the `ciphertext_size_test.go` stream cases, `random_access_test.go` all including `FuzzRandomAccessDecryptorChunkBoundaries`), plus `TestTDE1TamperAndTruncation`, `TestPersistedSaltReproducesCiphertext` (security §16), `TestEncryptingReaderAtMatchesStream`, `TestEncryptingReaderAtAnyOffset`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/crypto/stream/... ./internal/crypto/randomaccess/...
+go test -mod=readonly -race ./internal/crypto/stream/... ./internal/crypto/randomaccess/...
+gofmt -l internal/crypto/stream internal/crypto/randomaccess
+```
+
+**Commits.** `port tde1 stream encryption`, `add encrypting reader at for resumable sends`, `port authenticated random access decryptor`.
+
 ### 5.5 Lane L5 — internal/crypto/keyring
 
-Implement internal/crypto/keyring. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Own the server key: load and verify the key file, derive every subkey, wrap and unwrap per-bucket DEKs bound to their bucket, seal access-key secrets, and hand out zeroable key values.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/crypto/keyring/`.
+
+**Read.** `docs/spec/security.md` §5.1–§5.7 (key file, the §5.2 subkey list, fingerprint, rotation); `docs/spec/storage-model.md` §8.2–§8.6; `docs/spec/operations.md` §5.
+
+**Rules.**
+- The key file is exactly 32 bytes; 31 or 33 are refused. Every subkey is `HKDF-SHA256(server key, salt = empty, info)` with the security §5.2 info strings.
+- The fingerprint is 16 bytes, written as 22 base64url characters.
+- A wrapped DEK is 72 bytes with `aad = "butterdb/dek/v1|" + decimal(bucket channel ID)`, so unwrapping with another channel or `kid` fails. A wrong key check returns `ErrDEKCheck`.
+- `SealSecret` and `OpenSecret` bind the access key ID as additional data. Every `Key` value redacts in logs, and `Clear` zeroes it, on error paths too.
+- Implement the method set the phase 03 contract lists (`Fingerprint`, `WrapDEK`, `UnwrapDEK`, `SealSecret`, `OpenSecret`, `SessionKey`, `SnapshotKey`, `OwnerID`, `Close`).
 
 Verified source instructions for this lane:
 
@@ -129,18 +210,35 @@ Verified source instructions for this lane:
 | `backend/crypto/vault.go` | 308 | PORT-PARTIAL | `internal/crypto/keyring` (L5) | Keep: `WrapMasterKey` / `UnwrapMasterKey` (XChaCha20-Poly1305, output `nonce(24) ‖ ciphertext`, 72 bytes for a 32-byte key), `EncodeKeyCheck` / `VerifyKeyCheck`, `NewMasterKey` (32 random bytes) as the per-bucket DEK generator, exact envelope length checks. Change: the KEK is the 32-byte server key file (A6), key-check plaintext per 5.5, randomness injected. Drop: `KDFArgon2id`, `Params`, `DefaultParams`, `DeriveKEK`, `NewSalt`, `MarshalParams`, `UnmarshalParams`, the KDF half of `ValidateVaultMaterial` |
 | `backend/services/encryption/key_lease.go` | 92 | PATTERN-ONLY | `internal/crypto/keyring` (L5) | A lease returns a private copy of key bytes and zeroes it on `Close`; the store zeroes a replaced key. butterDB leases unwrapped DEKs the same way |
 
-Commit this lane as `implement phase 03 internal crypto keyring` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/crypto/vault.go`: `type Params struct {`; `func DefaultParams() Params {`; `func DeriveKEK(password, salt []byte, p Params) ([]byte, error) {`; `func NewMasterKey() ([]byte, error) {`; `func NewSalt(p Params) ([]byte, error) {`; `func MarshalParams(p Params) (string, error) {`; `func UnmarshalParams(s string) (Params, error) {`; `func ValidateVaultMaterial(salt []byte, p Params, wrappedMasterKey, keyCheck []byte) error {`
 - `backend/services/encryption/key_lease.go`: `type MasterKeyLease struct {`; `func (s *Service) AcquireMasterKeyLease() (*MasterKeyLease, error) {`; `func (l *MasterKeyLease) Key() ([]byte, error) {`; `func (l *MasterKeyLease) Close() {`
 
+**Tests (binding names).** the carried `vault_test.go` and `key_lease_test.go` pattern cases, plus `TestKeyringDerivationsDistinct`, `TestWrappedDEKBoundToBucket`, `TestKeyCopiesCleared` (security §16), `TestKeyFileLengthExact`, `TestSealSecretBindsAccessKeyID`, `TestKeyRedactsInLogs`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/crypto/keyring/...
+go test -mod=readonly -race ./internal/crypto/keyring/...
+gofmt -l internal/crypto/keyring
+```
+
+**Commits.** `add server keyring with subkey derivation`, `add dek wrapping and secret sealing`.
+
 ### 5.6 Lane L6 — internal/storage/{objectrepo,bucketrepo} (keyset listing with prefix/delimiter support for ListObjectsV2)
 
-Implement internal/storage/{objectrepo,bucketrepo} (keyset listing with prefix/delimiter support for ListObjectsV2). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Write the read and write repositories over the projected objects and buckets, including keyset listing with prefix, delimiter, start-after and continuation that ListObjectsV2 needs.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/storage/objectrepo/`, `internal/storage/bucketrepo/`.
+
+**Read.** `docs/spec/schema.md` §4.7–§4.11 (buckets, objects, encryption keys, tombstones, bodies), §6, §9 (`storage/objectrepo` rows); `docs/spec/s3-api.md` §7.3 (ListObjectsV2 semantics); `docs/spec/storage-model.md` §6.
+
+**Rules.**
+- Listing orders keys bytewise, so `z` sorts before `é`. A prefix's upper bound is computed in bytes. A delimiter skips each rolled-up common prefix with one index seek.
+- Continuation tokens resume after a key or after a common prefix, and the planner uses the primary-key index.
+- Writes happen only inside transactions handed in by the projector. Repositories never open their own write transactions on projected tables.
 
 Verified source instructions for this lane:
 
@@ -151,14 +249,24 @@ Verified source instructions for this lane:
 | `backend/projection/reconcile.go` | 61 | PORT-PARTIAL | `internal/storage/objectrepo` (L6) | `LiveFileMessageIDs` becomes "live body and put message IDs per bucket channel", excluding tombstoned objects |
 | `backend/projection/read.go` | 908 | PATTERN-ONLY | `internal/storage/objectrepo` (L6) | Read helpers such as `FileEncryptionMeta`. Listing is new: keyset pagination with prefix and delimiter for ListObjectsV2 |
 
-Commit this lane as `implement phase 03 internal storage objectrepo bucketrepo keyset` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/projection/encryption.go`: `type EncryptionConfig struct {`; `func GetEncryptionConfig(db *sql.DB, channelID int64) (EncryptionConfig, error) {`; `func PutEncryptionConfig(db *sql.DB, c EncryptionConfig) error {`; `func PutEncryptionConfigTx(tx *sql.Tx, c EncryptionConfig) error {`
 - `backend/projection/managed_messages.go`: `func ManagedMsgIDsIn(ctx context.Context, db *sql.DB, channelID int64, candidates []int64) (map[int64]struct{}, error) {`
 - `backend/projection/reconcile.go`: `type FileMessageRefs struct {`; `func LiveFileMessageIDs(db *sql.DB, channelID int64) ([]FileMessageRefs, error) {`
 - `backend/projection/read.go`: `type FolderSlim struct {`; `type FileSlim struct {`; `type SearchHit struct {`; `func ListFolderContents(db *sql.DB, channelID int64, parentID string) ([]FolderSlim, []FileSlim, error) {`; `func ListFolderContentsContext(ctx context.Context, db *sql.DB, channelID int64, parentID string) ([]FolderSlim, []FileSlim, error) {`; `func OrphanedFiles(db *sql.DB, channelID int64) ([]FileSlim, error) {`; `func MediaFiles(db *sql.DB, channelID int64) ([]FileSlim, error) {`; `func ListAllFolders(db *sql.DB, channelID int64) ([]FolderSlim, error) {`
+
+**Tests (binding names).** every schema §9 `storage/objectrepo` row (`TestListByteOrder`, `TestPrefixEnd`, `TestListDelimiterSkipsByIndex`, `TestContinuationKinds`, `TestListQueryPlan`), plus `TestBucketLookupByName`, `TestBucketListOrdered`, `TestObjectMetaRoundTrip`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/storage/objectrepo/... ./internal/storage/bucketrepo/...
+go test -mod=readonly -race ./internal/storage/objectrepo/... ./internal/storage/bucketrepo/...
+gofmt -l internal/storage/objectrepo internal/storage/bucketrepo
+```
+
+**Commits.** `add object repository with keyset listing`, `add bucket repository`.
 
 ## 6. Integration lane
 

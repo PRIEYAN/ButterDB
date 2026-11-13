@@ -183,6 +183,10 @@ type Info struct {
 	Policy string
 	DefaultEncryption string
 	CacheMaxAge int64
+	CreatedDate int64
+	ObjectCount int64
+	StoredBytes int64
+	PlaintextBytes int64
 }
 
 type Spec struct {
@@ -245,9 +249,17 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — wire core
 
-Implement wire core: internal/wire/{grammar.go,parse.go,format.go,errors.go} (port TDrive backend/projection wire code). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port the TDX1 grammar: extract the header line, split pairs, unescape, and format, with the parser skeleton and setters, but no op-specific fields (those are L2's).
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/wire/grammar.go`, `internal/wire/parse.go`, `internal/wire/format.go`, `internal/wire/errors.go` and their `_test.go` files. The `Op` and `OpType` contract comes from the prelude; do not edit it.
+
+**Read.** `docs/spec/wire-format.md` §1 (grammar), §2 (Go contract), §7 (versioning and the unknown-op rule E5), §8 (parser skeleton), §9 (setters), §12 (round-trip obligation); legacy `docs/butterDBCore.md` lines 1023–1249.
+
+**Rules.**
+- Only the first line is the header. The version prefix is literal `TDX1`, the separator is `|`, and a pair is `key=value` with `=` not at index 0. Text uses `url.QueryEscape`; binary uses `base64.RawURLEncoding`.
+- Unknown keys are ignored. An unknown `t=` value parses into the prelude's unknown-op form, not into a fatal error, per wire-format §7.3 (E5).
+- Timestamps lie in `0..253402300799`. Every malformed case returns its specific sentinel from `errors.go`.
+- The standard library only. No allocation-heavy regexes in the hot path.
 
 Verified source instructions for this lane:
 
@@ -255,17 +267,34 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/projection/wire.go` | 708 | PORT-PARTIAL | `internal/wire/{grammar.go,parse.go,format.go,errors.go}` (L1) | Keep: `TDX1` prefix check, `ExtractHeaderLine` (first line only), `\|`-separated `key=value` pairs with `=` required after a non-empty key, `url.QueryEscape` / `url.QueryUnescape` for text values, `base64.RawURLEncoding` for binary values (`setB64`), positive integer parsing (`setPositiveInt64`), timestamp ceiling `maxWireUnixTimestamp`, sentinels `ErrWireMissingHeader`, `ErrWireBadVersion`, `ErrWireMalformed` (renamed by the phase 02 prelude). Change: unknown `t=` returns a parsed op marked unknown, not `ErrWireBadOpType` (E5); unknown keys inside a known op are ignored. Drop: every folder and namespace op (`f`, `meta`, `mkdir`, `rename`, `move`, `rmdir`, `tomb`), multipart (`part`, `manifest`), writable ops (`fcommit`, `freplace`, `dcommit`, `relocate`, `trash`, `harddel`, `untrash`), `d:` / `f:` object prefixes, KDF fields of `encfg` (`KDFSalt`, `KDFParamsJSON`, `Hint`) |
 
-Commit this lane as `implement phase 02 wire core` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/projection/wire.go`: `func ExtractHeaderLine(raw string) string {`; `func Parse(raw string) (Op, error) {`; `func Format(op Op) string {`
 
+**Tests (binding names).** the carried `backend/projection/wire_test.go` cases in this phase's regression table, plus `TestHeaderFirstLineOnly`, `TestUnknownKeysIgnored`, `TestUnknownOpTypeIsUnknownOp`, `TestEscapingRoundTrip`, `TestEmptyPairRejected`, `TestEqualsAtIndexZeroRejected`, and `FuzzParseNoPanic`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/wire/...
+go test -mod=readonly -race ./internal/wire/...
+gofmt -l internal/wire
+```
+
+**Commits.** `port tdx1 grammar parser and formatter`.
+
 ### 5.2 Lane L2 — op catalogue
 
-Implement op catalogue: internal/wire/ops_*.go (body, put, del, bcreate, bcfg, bdel, encfg, registry marker) + round-trip table tests. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Define every butterDB op (`body`, `put`, `del`, `reg`, `bcreate`, `bcfg`, `bdel`, `encfg`) with its required keys and validation, the length and overflow rules, and the round-trip table that gates the formats.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/wire/ops_*.go` and `internal/wire/ops_*_test.go`, plus `internal/wire/testdata/`.
+
+**Read.** `docs/spec/wire-format.md` §3–§6 (catalogue, field vocabulary, op definitions, length limits and the §6.3 overflow rule), §10 (worked examples, byte-exact), §11 (legacy ops not used), §12 (round-trip obligation).
+
+**Rules.**
+- Each op file registers its type with the L1 parser through the prelude's registration hook. If the prelude lacks one, stop and report; do not add one to L1's files.
+- Text-message headers must fit 4096 characters, and the `t=body` caption must fit 1024. Overflow returns the §6.3 error before any send. Keys are capped at 1024 bytes.
+- None of the legacy ops in §11 parse as known ops.
 
 Verified source instructions for this lane:
 
@@ -273,17 +302,36 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/projection/wire.go` `setWritableEnvelope`, `setContentReference` | (in 708) | PATTERN-ONLY | `internal/wire/ops_*.go` (L2) | TDrive's writable ops carry a version and a durable operation ID and reference the hidden body by message ID and content hash. butterDB's `t=body` carries `j=<job id>` and `t=put` references the body message ID, sizes, MD5 and SHA-256 the same way |
 
-Commit this lane as `implement phase 02 op catalogue` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/projection/wire.go`: `func ExtractHeaderLine(raw string) string {`; `func Parse(raw string) (Op, error) {`; `func Format(op Op) string {`
 
+**Tests (binding names).** `TestRoundTripEveryOp` (`Parse(Format(op)) == op` for every op), `TestEveryMalformedCase` (one row per setter failure), `TestWorkedExamplesByteExact` (every §10 example), `TestOverflowRule`, `TestCaptionLimitBody`, `TestLegacyOpsNotKnown`, `TestPutRequiresJob`, `TestBodyRequiresJob` (the carried writable-wire pattern), and `FuzzRoundTrip`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/wire/...
+go test -mod=readonly -race ./internal/wire/...
+gofmt -l internal/wire
+```
+
+**Commits.** `add tdx1 object and registry ops`, `add tdx1 round trip and malformed case tables`.
+
 ### 5.3 Lane L3 — TDE1 format
 
-Implement TDE1 format: internal/crypto/format. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port the TDE1 container constants and pure arithmetic: header layout, nonce construction with the final-chunk bit, ciphertext size, stored offsets, and plaintext validation.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/crypto/format/`.
+
+**Read.** `docs/spec/storage-model.md` §7.1 (size arithmetic) and §8 (encryption model); legacy `docs/butterDBCore.md` lines 2017–2222 (TDE1, normative byte for byte).
+
+**Rules.**
+- The 50-byte header is `TDE1`, flags 0, `chunk_log2` 16, a 16-byte salt, a 20-byte nonce prefix, and the LE64 plaintext size. Chunks are 65,536 bytes with a 16-byte tag.
+- `CiphertextSize(L) = 50 + L + 16 × (L/65536 + 1)`. There is always a final chunk, so an empty file is 66 bytes. It saturates at `MaxInt64` on overflow.
+- The nonce is `prefix(20) ‖ BE32(counter)`, with bit 31 marking the final chunk.
+- The largest encrypted plaintext that fits `limits.MaxStoredObjectBytes` is 1,991,808,062 bytes. Export it as a constant computed from the formula, and test it.
+- The standard library only. This package does no encryption at all; that is phase 03.
 
 Verified source instructions for this lane:
 
@@ -292,18 +340,37 @@ Verified source instructions for this lane:
 | `backend/crypto/stream.go` (constants, `ValidatePlaintextSize`, `CiphertextSize`, `buildNonce`, header layout) | 318 | PORT-PARTIAL | `internal/crypto/format` (L3) | Keep verbatim: magic `TDE1`, header 50 bytes (`4+1+1+16+20+8`), `chunkSizeLog2 = 16`, chunk 65,536 bytes, salt 16, nonce prefix 20, tag 16, `finalChunkBit = 1 << 31`, `maxPlaintextSize = 2^47 − 1`, plaintext size little-endian. Change: `streamTagLen` becomes the literal `16` because `format` imports the standard library only (rule L1) and cannot import `chacha20poly1305`; sentinels `ErrShortHeader`, `ErrBadMagic`, `ErrUnsupported`, `ErrNegativePlaintextSize`, `ErrPlaintextTooLarge` move here |
 | `backend/crypto/random_access.go` `StoredOffset`, `ciphertextChunkOffset` | (in 413) | PORT-PARTIAL | `internal/crypto/format` (L3) | Plaintext offset to stored offset arithmetic, overflow-checked |
 
-Commit this lane as `implement phase 02 tde1 format` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/crypto/stream.go`: `func ValidatePlaintextSize(plaintextSize int64) error {`; `func EncryptStream(src io.Reader, dst io.Writer, masterKey []byte, plaintextSize int64) error {`; `func CiphertextSize(plaintextSize int64) int64 {`; `func DecryptStream(src io.Reader, dst io.Writer, masterKey []byte) (int64, error) {`
 - `backend/crypto/random_access.go`: `type ContextReaderAt interface {`; `type RandomAccessDecryptor struct {`; `func NewRandomAccessDecryptor(`; `func (decryptor *RandomAccessDecryptor) Clone(source ContextReaderAt) (*RandomAccessDecryptor, error) {`; `func (decryptor *RandomAccessDecryptor) Size() int64 {`; `func (decryptor *RandomAccessDecryptor) ReadAt(`; `func (decryptor *RandomAccessDecryptor) Close() error {`; `func StoredOffset(plaintextOffset int64) (int64, bool) {`
 
+**Tests (binding names).** `TestCiphertextSizeSaturatesOnOverflow`, `TestValidatePlaintextSizeEnforcesTDE1CounterCapacity`, `TestStoredOffsetSkipsHeaderAndEarlierChunkTags` (carried), plus `TestCiphertextSizeVectors` (0→66, 1→67, 65535→65601, 65536→65618, 65537→65619), `TestMaxEncryptedPlaintextFits`, `TestHeaderRoundTrip`, `TestHeaderRejectsBadMagicFlagsLog2`, `TestNonceFinalBit`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/crypto/format/...
+go test -mod=readonly -race ./internal/crypto/format/...
+gofmt -l internal/crypto/format
+```
+
+**Commits.** `port tde1 header nonce and size arithmetic`.
+
 ### 5.4 Lane L4 — schema and sqlite
 
-Implement schema and sqlite: internal/storage/{sqlitedb,schema}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Write all schema-version-1 DDL for both databases as embedded migrations, and the SQLite adapter: one writer connection plus a read-only WAL pool, per-connection pragmas, `VacuumInto`, and the migration runner.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/storage/sqlitedb/`, `internal/storage/schema/` (including `projection/0001_init.sql` and `control/0001_init.sql`).
+
+**Read.** `docs/spec/schema.md` §1–§3 (databases, connections, the §2.2 Go contract, the no-transaction-across-network rule, migrations), §4.1 and §5.1 (full DDL, copied byte for byte), §6 (ownership), §9 (required tests); `docs/decisions.md` E7.
+
+Implement the schema.md §2.2 contract exactly. `schema` exposes `Apply(ctx, db, name string) error` plus the sentinels `ErrSchemaTooNew`, `ErrSchemaChecksum` and `ErrWrongDatabase`.
+
+**Rules.**
+- This lane is the only importer of `modernc.org/sqlite` in this phase, and the prelude adds it by exact package path.
+- Apply pragmas on every pool connection through a connector hook, never once per `*sql.DB`. Database files and their `-wal` and `-shm` siblings are `0600`.
+- Migrations are embedded with a glob and applied in name order, with the version, name and SHA-256 recorded in `schema_version`. There is no shared list file.
 
 Verified source instructions for this lane:
 
@@ -313,20 +380,48 @@ Verified source instructions for this lane:
 | `backend/sync/initial_scan_spool.go` (DDL only) | (in 136) | PORT-PARTIAL | `internal/storage/schema` (L4) | `initial_scan_spool (channel_id, msg_id, from_id, date, text, has_media, media_size, document_name, PRIMARY KEY (channel_id, msg_id))` |
 | `backend/storage_sqlite.go` | 117 | PATTERN-ONLY | `internal/storage/sqlitedb` (L4) | Keep the pragma values: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON`, `temp_store=MEMORY`, `cache_size=-32768`, `mmap_size=134217728`. Change: one writer connection plus a read-only WAL pool, pragmas applied per connection through the DSN (E7); no global `DB` |
 
-Commit this lane as `implement phase 02 schema and sqlite` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/projection/schema.go`: `func EnsureSchema(db *sql.DB) error {`; `func MigratePersonalChannel(db *sql.DB, personalChannelID int64) error {`
 - `backend/storage_sqlite.go`: `func InitDB() error {`; `func TuneSQLite(db *sql.DB) error {`; `func EnsureSchema() error {`; `func MigratePersonalChannel(personalChannelID int64) error {`
 
+**Tests (binding names).** every `storage/schema` and `storage/sqlitedb` row of schema.md §9: `TestMigrationsContiguous`, `TestApplyFreshAndIdempotent`, `TestSchemaTooNew`, `TestSchemaChecksum`, `TestWrongDatabase`, `TestDDLMatchesSpec`, `TestPragmasOnEveryConnection`, `TestPoolIsQueryOnly`, `TestReadsDoNotWaitForWriter`, `TestVacuumIntoConsistent`, `TestFileMode0600`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/storage/sqlitedb/... ./internal/storage/schema/...
+go test -mod=readonly -race ./internal/storage/sqlitedb/... ./internal/storage/schema/...
+gofmt -l internal/storage/sqlitedb internal/storage/schema
+```
+
+**Commits.** `add sqlite writer and read pool adapter`, `add schema version one migrations`.
+
 ### 5.5 Lane L5 — domain model
 
-Implement domain model: internal/domain/{object,bucket,access}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Implement the domain value types and their validation for objects, buckets and access keys, so every later layer shares one definition of a valid key, bucket name, scope and ETag.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/domain/object/`, `internal/domain/bucket/`, `internal/domain/access/`. The prelude commits the type contracts (including `object.PutRequest`, `ListQuery`, `ListPage`, `ObjectMeta`); this lane adds constructors, validation and tests. Never change a field the prelude defined.
 
-Commit this lane as `implement phase 02 domain model` after its package tests pass.
+**Read.** `docs/spec/s3-api.md` §4.9–§4.10 (key IDs, scopes and actions), §6.4 (bucket names), §8.7 (keys and metadata), §8.8 (ETag rules); `docs/spec/storage-model.md` §5 and §6; `docs/spec/admin-api.md` §16.8 (domain names the admin layer expects).
+
+**Rules.**
+- Keys are UTF-8, 1 to 1024 bytes, with no control characters (s3-api §8.7). User metadata is at most 2048 bytes. Bucket names follow the S3 rules in s3-api §6.4.
+- A scope's buckets are a list of names or exactly `["*"]`. Actions are a non-empty subset of `read`, `list`, `write`, `delete`.
+- An ETag is the quoted MD5 hex. A multipart ETag is the MD5 of the binary part MD5s, plus `-N`.
+- The standard library only. Values are immutable after construction.
+
+**Tests (binding names).** `TestKeyValidation` (empty, 1024, 1025 bytes, control characters, invalid UTF-8), `TestUserMetadataLimit`, `TestBucketNameRules` (the s3-api §6.4 table), `TestScopeValidation`, `TestActionParsing`, `TestAccessKeyIDFormat`, `TestETagFormat`, `TestMultipartETag`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/domain/object/... ./internal/domain/bucket/... ./internal/domain/access/...
+go test -mod=readonly -race ./internal/domain/object/... ./internal/domain/bucket/... ./internal/domain/access/...
+gofmt -l internal/domain/object internal/domain/bucket internal/domain/access
+```
+
+**Commits.** `add object bucket and access domain validation`.
 
 ## 6. Integration lane
 

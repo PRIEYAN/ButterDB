@@ -78,7 +78,10 @@ flood-wait budgeting and the write coordinator; L3 owns send and range
 operations; L4 owns the RPC and authentication adapters; L5 implements the
 same consumer-facing methods in `faketg`; L6 owns persisted identity and login.
 Add `github.com/gotd/td/telegram@v0.145.1` and every exact gotd subpackage
-imported by these adapters, using TDrive's `go.mod` version. Only
+imported by these adapters, using TDrive's `go.mod` version. Also add
+`golang.org/x/time/rate` by exact package path, pinned to its newest release
+that is at least two weeks old; `internal/tgclient/flow` (L2) builds the E10
+send limiter on it, and it is the only rate limiter in the system. Only
 `internal/tgclient` may import gotd. Commit as
 `define telegram transport contracts`.
 
@@ -97,9 +100,17 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/tgclient/conn
 
-Implement internal/tgclient/conn. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port the Telegram connection core: one long-lived gotd run scope, per-DC media pools with dial backoff, `DocumentRef` resolution and deduplicated file-reference refresh.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/tgclient/conn/`.
+
+**Read.** Legacy `docs/butterDBCore.md` lines 956–1000 (connection architecture, document references); `docs/spec/operations.md` §13.1 (retained constants); `docs/claude.md` (only `internal/tgclient` imports gotd).
+
+**Rules.**
+- One `client.Run` scope per account, started lazily, with every call dispatched onto it. A failed connect is not fatal to the engine.
+- `MediaPoolSize = 4` per DC. Concurrent first reads share one dial (singleflight), and a failed dial backs off for 30 s per DC.
+- An expired `FileReference` is normal: re-resolve once, deduplicated across concurrent readers, and keep the fresh reference.
+- Support a second, independent instance for the replica account (phase 12). No package-level state.
 
 Verified source instructions for this lane:
 
@@ -113,8 +124,6 @@ Verified source instructions for this lane:
 | `backend/auth/auth.go` | 230 | PORT-PARTIAL | `internal/tgclient/authrpc` (L4), `internal/identity` (L6), `internal/tgclient/conn` (L1) | `authrpc`: `SendCode`, `SignIn`, mapping `auth.ErrPasswordAuthNeeded` to a password step, `AccountGetPassword` hint, `Password`, auth status. `identity`: api_id and api_hash save and load through `secretfile` (TDrive `imp_config.json`). `conn`: `ConnectWithOptions` builds `telegram.NewClient(apiID, apiHash, options)` with the session store. Drop the blocking `StartLogin` loop; butterDB relays one step per admin API call |
 | `backend/livesync/activity.go` (`Handle`, `ChannelIDsFromUpdates`, `channelIDFromUpdate`) | (in 127) | PORT-PARTIAL | `internal/tgclient/conn` (L1) | gotd `UpdateHandler` extracting channel IDs from `UpdateShort`, `Updates`, `UpdatesCombined`, `UpdateNewChannelMessage` and friends, delivered without blocking |
 
-Commit this lane as `implement phase 04 internal tgclient conn` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/tgclient/session.go`: `func (l *liveConn) Close() {`
@@ -124,11 +133,50 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/auth/auth.go`: `type ImpCredentials struct {`; `func GetConfigPath() string {`; `func SaveImpCredentials(id int, hash string) error {`; `func LoadImpCredentials() (ImpCredentials, error) {`; `func Connect() (*telegram.Client, error) {`; `func ConnectWithOptions(options telegram.Options) (*telegram.Client, error) {`; `func CheckLogin(ctx context.Context) (bool, error) {`; `func StartLogin(ctx context.Context, client *telegram.Client, ch getChannel, phone string) error {`
 - `backend/livesync/activity.go`: `type Activity interface {`; `type TelegramActivity struct {`; `func NewTelegramActivity(buffer int) *TelegramActivity {`; `func (a *TelegramActivity) Signals() <-chan int64 {`; `func (a *TelegramActivity) Dropped() int64 {`; `func (a *TelegramActivity) Signal(channelID int64) {`; `func (a *TelegramActivity) Handle(_ context.Context, updates tg.UpdatesClass) error {`; `func ChannelIDsFromUpdates(updates tg.UpdatesClass) []int64 {`
 
+**Tests (binding names).** the carried `session_test.go` (all eight `TestLiveConn*`), `gotd_pool_test.go` and the listed `gotd_documents_test.go` cases, plus `TestTwoAccountsIndependent`, `TestFileReferenceRefreshDeduplicated`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/tgclient/conn/...
+go test -mod=readonly -race ./internal/tgclient/conn/...
+gofmt -l internal/tgclient/conn
+```
+
+**Commits.** `port telegram connection scope and media pools`, `add document reference resolution and refresh`.
+
 ### 5.2 Lane L2 — internal/tgclient/flow
 
-Implement internal/tgclient/flow. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port flow control: typed flood waits, retry policies with independent flood and transient budgets, the write coordinator that shares the longest cooldown, the getFile limiter with a foreground reserve, and the E10 send-rate limiter.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/tgclient/flow/`.
+
+**Read.** Legacy `docs/butterDBCore.md` lines 2922–3086 (range transport and rate limiting); `docs/spec/operations.md` §2.4 `telegram.send_rate.*`, §13.3–§13.4 (limiter classes); `docs/decisions.md` E10.
+
+```go
+package flow
+
+type SendClass int
+
+const (
+	SendControl SendClass = iota + 1
+	SendDocument
+)
+
+type SendLimiter struct{}
+
+func NewSendLimiter(controlPerMinute, controlBurst, documentsPerMinute, documentsBurst int) *SendLimiter
+func (l *SendLimiter) Reserve(class SendClass) (delay time.Duration, cancel func())
+func (l *SendLimiter) Wait(ctx context.Context, class SendClass) error
+```
+
+`Reserve` wraps `golang.org/x/time/rate` reservations, and the prelude adds `golang.org/x/time/rate` by exact path. `ingest/admission` (phase 06) consumes `Reserve` through its `Pacer` port. The limiter is the only E10 token bucket in the system.
+
+**Rules.**
+- Convert gotd flood waits to `FloodWaitError` at the boundary. Callers branch on the type, never on text. Recognise `FLOOD_PREMIUM_WAIT_X` as a flood wait.
+- The write coordinator serialises message sends, rechecks cooldown after queueing, and records server-directed waits for every class. The longest cooldown applies across classes.
+- getFile: 12 total slots, 4 reserved for foreground API reads, 8 for background work acquired with a non-queueing `TryAcquire` so background work never blocks a foreground read.
+- The send limiter is on by default, with operations §2.4 rates. Flood waits remain an additional floor on top of it.
 
 Verified source instructions for this lane:
 
@@ -139,8 +187,6 @@ Verified source instructions for this lane:
 | `backend/tgclient/getfile_limiter.go` | 125 | PORT | `internal/tgclient/flow` (L2) | `MaxConcurrentGetFile = 12`, `PlaybackGetFileReserve = 4`, `MaxConcurrentBackgroundGetFile = 8`, `DefaultDownloadThreads = 4`, upload-part slots `UploadThreads`. Change: package semaphores become one limiter value; "playback" reserve becomes the foreground (API GET) reserve |
 | `backend/tgclient/transient.go` | 97 | PORT | `internal/tgclient/flow` (L2) | `IsTransientTransport`: typed checks first, then the transport string patterns |
 
-Commit this lane as `implement phase 04 internal tgclient flow` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/tgclient/floodwait_retry.go`: `type FloodWaitRetryPolicy struct {`; `func DefaultWriteFloodWaitRetryPolicy() FloodWaitRetryPolicy {`; `func DefaultUploadFloodWaitRetryPolicy() FloodWaitRetryPolicy {`; `func DefaultUploadNetworkRetryPolicy() FloodWaitRetryPolicy {`; `func (p FloodWaitRetryPolicy) Validate() error {`; `func (p FloodWaitRetryPolicy) Do(ctx context.Context, action func() error) error {`
@@ -148,11 +194,32 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/tgclient/getfile_limiter.go`: `func AcquireGetFileSlots(ctx context.Context, n int) (func(), error) {`; `func AcquireBackgroundGetFileSlots(ctx context.Context, n int) (func(), error) {`
 - `backend/tgclient/transient.go`: `func IsTransientTransport(err error) bool {`
 
+**Tests (binding names).** the carried `floodwait_retry_test.go`, `write_coordinator_test.go`, `getfile_limiter_test.go` ("playback" read as foreground) and `transient_test.go` cases, plus `TestPremiumFloodWaitIsFloodWait`, `TestSendLimiterBurstThenSteady`, `TestReserveCancelReturnsToken`, `TestBackgroundNeverBlocksForeground`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/tgclient/flow/...
+go test -mod=readonly -race ./internal/tgclient/flow/...
+gofmt -l internal/tgclient/flow
+```
+
+**Commits.** `port flood wait retry policies`, `port write coordinator and getfile limiter`, `add default on send rate limiter`.
+
 ### 5.3 Lane L3 — internal/tgclient/{send,rangeio}
 
-Implement internal/tgclient/{send,rangeio}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Port idempotent sending and bounded range reads: `StableRandomID`, document and control sends that classify uncertain outcomes, `ReadDocumentRange` with its preconditions, and CDN redirect reads with hash verification.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/tgclient/send/`, `internal/tgclient/rangeio/`.
+
+**Read.** Legacy `docs/butterDBCore.md` lines 1001–1022 (idempotency), 2643–2697 (transport layer and retry), 2946–2963 (range preconditions), 3042–3086 (CDN reads); `docs/spec/storage-model.md` §2.2 (send rules for every message) and §6.3.
+
+**Rules.**
+- `StableRandomID(jobID, step) = int64(LE64(sha256(jobID + "\x00" + step)[:8])) | 1`. Retries reuse it.
+- A send returning a message ID and an error means the message exists. Classify it as accepted. Use the distinct `ErrSendOutcomeUnknown` when acceptance cannot be determined, and never collapse it into a generic failure.
+- Every body is a document with `ForceFile`, `application/octet-stream` and `silent`. Bodies are `io.ReadSeeker`s, rewound before a resend and never resumed mid-stream. Telegram upload parts are 512 KiB, 8 threads.
+- Range reads require 4 KiB alignment, at most 1 MiB, and must not cross a 1 MiB boundary. Validate before the wire.
+- CDN bytes are AES-CTR with IV counter `offset/16`, verified against `upload.getCdnFileHashes`. Re-upload is requested at most once.
 
 Verified source instructions for this lane:
 
@@ -166,8 +233,6 @@ Verified source instructions for this lane:
 | `backend/tgclient/upload_part_retry.go` | 49 | PORT | `internal/tgclient/send` (L3) | Retries one `upload.saveFilePart` through throttling, releasing the slot during cooldown |
 | `backend/tgclient/upload_media_retry.go` | 44 | PORT | `internal/tgclient/send` (L3) | Keeps the uploaded handle and `random_id` across retries; a send whose receipt cannot be recovered returns `ErrSendOutcomeUnknown` |
 
-Commit this lane as `implement phase 04 internal tgclient send rangeio` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/tgclient/gotd.go`: `type Gotd struct {`; `func NewGotd(connect func() (*telegram.Client, error)) *Gotd {`; `func (g *Gotd) Close() {`; `func (g *Gotd) SelfID(ctx context.Context) (int64, error) {`; `func (g *Gotd) SelfProfile(ctx context.Context) (UserProfile, error) {`; `func (g *Gotd) ResolveUsersFromMessages(ctx context.Context, peer InputPeer, refs []UserMessageRef) ([]UserProfile, error) {`; `func (g *Gotd) SendControl(ctx context.Context, peer InputPeer, text string, silent bool) (int64, error) {`; `func (g *Gotd) SendControlWithRandomID(ctx context.Context, peer InputPeer, text string, silent bool, sendRandomID int64) (int64, error) {`
@@ -175,11 +240,31 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/tgclient/idempotency.go`: `func StableRandomID(operationID, step string) (int64, error) {`
 - `backend/tgclient/upload_part_retry.go`: `func (c *retryingUploadClient) UploadSaveFilePart(ctx context.Context, request *tg.UploadSaveFilePartRequest) (bool, error) {`; `func (c *retryingUploadClient) UploadSaveBigFilePart(ctx context.Context, request *tg.UploadSaveBigFilePartRequest) (bool, error) {`
 
+**Tests (binding names).** the carried `idempotency_test.go`, `upload_part_retry_test.go`, `upload_media_retry_test.go`, `gotd_updates_test.go`, `range_test.go` (including CDN hash cases) and listed `download_test.go` cases, plus `TestStableRandomIDVectors`, `TestAcceptedWithErrorIsAccepted`, `TestRangePreconditions`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/tgclient/send/... ./internal/tgclient/rangeio/...
+go test -mod=readonly -race ./internal/tgclient/send/... ./internal/tgclient/rangeio/...
+gofmt -l internal/tgclient/send internal/tgclient/rangeio
+```
+
+**Commits.** `port idempotent document and control sends`, `port bounded range reads with cdn verification`.
+
 ### 5.4 Lane L4 — internal/tgclient/{rpc,authrpc}
 
-Implement internal/tgclient/{rpc,authrpc}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Expose the remaining RPCs every later phase needs: channel creation and admin edits, history paging, channel differences, message lookup and deletion, dialogs for access-hash refresh, Saved Messages sends, and the login RPCs behind `internal/identity`.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/tgclient/rpc/`, `internal/tgclient/authrpc/`.
+
+**Read.** Legacy `docs/butterDBCore.md` lines 865–955 (login state machine, drive creation, RPC catalogue); `docs/spec/storage-model.md` §4.1, §5.2, §9; `docs/spec/admin-api.md` §5.4 (Saved Messages delivery) and §8.
+
+**Rules.**
+- Methods include `CreateChannel`, `EditAdmin`, `GetHistory`, `GetChannelDifference`, `GetMessages` (batched), `DeleteMessages` (batches of 100), `GetDialogs` (primary and archived), `SendToSavedMessages` (`inputPeerSelf`, no link previews), `UsersGetSelf`, and `authrpc` `SendCode`, `SignIn`, `CheckPassword`, `GetPasswordHint`, `LogOut`.
+- Never call a channel with a zero access hash. Refresh stale hashes from dialogs.
+- Every method goes through `flow` (coordinator and limiter) and returns typed errors. `PHONE_CODE_INVALID` and `PASSWORD_HASH_INVALID` map to sentinels that the identity layer retries in place.
+- The exported method set is what `faketg` (L5) mirrors. Keep it explicit and small.
 
 Verified source instructions for this lane:
 
@@ -190,8 +275,6 @@ Verified source instructions for this lane:
 | `backend/auth/peer_resolution.go` | 56 | PORT | `internal/tgclient/rpc` (L4) | `ResolveDriveChannel`: recover a channel's access hash by walking dialogs in folders 0 and 1, rejecting inaccessible entities, preserving RPC failure and cancellation |
 | `backend/auth/auth.go` | 230 | PORT-PARTIAL | `internal/tgclient/authrpc` (L4), `internal/identity` (L6), `internal/tgclient/conn` (L1) | `authrpc`: `SendCode`, `SignIn`, mapping `auth.ErrPasswordAuthNeeded` to a password step, `AccountGetPassword` hint, `Password`, auth status. `identity`: api_id and api_hash save and load through `secretfile` (TDrive `imp_config.json`). `conn`: `ConnectWithOptions` builds `telegram.NewClient(apiID, apiHash, options)` with the session store. Drop the blocking `StartLogin` loop; butterDB relays one step per admin API call |
 
-Commit this lane as `implement phase 04 internal tgclient rpc authrpc` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/tgclient/gotd.go`: `type Gotd struct {`; `func NewGotd(connect func() (*telegram.Client, error)) *Gotd {`; `func (g *Gotd) Close() {`; `func (g *Gotd) SelfID(ctx context.Context) (int64, error) {`; `func (g *Gotd) SelfProfile(ctx context.Context) (UserProfile, error) {`; `func (g *Gotd) ResolveUsersFromMessages(ctx context.Context, peer InputPeer, refs []UserMessageRef) ([]UserProfile, error) {`; `func (g *Gotd) SendControl(ctx context.Context, peer InputPeer, text string, silent bool) (int64, error) {`; `func (g *Gotd) SendControlWithRandomID(ctx context.Context, peer InputPeer, text string, silent bool, sendRandomID int64) (int64, error) {`
@@ -199,11 +282,31 @@ TDrive exported declarations to compare while defining the butterDB adapter (the
 - `backend/auth/peer_resolution.go`: `type FolderDialogsQuery struct {`; `func (q FolderDialogsQuery) Query(ctx context.Context, request dialogs.Request) (tg.MessagesDialogsClass, error) {`; `func ResolveDriveChannel(ctx context.Context, api *tg.Client, channelID int64) (*tg.InputChannel, *tg.InputPeerChannel, error) {`
 - `backend/auth/auth.go`: `type ImpCredentials struct {`; `func GetConfigPath() string {`; `func SaveImpCredentials(id int, hash string) error {`; `func LoadImpCredentials() (ImpCredentials, error) {`; `func Connect() (*telegram.Client, error) {`; `func ConnectWithOptions(options telegram.Options) (*telegram.Client, error) {`; `func CheckLogin(ctx context.Context) (bool, error) {`; `func StartLogin(ctx context.Context, client *telegram.Client, ch getChannel, phone string) error {`
 
+**Tests (binding names).** the carried `history_placeholder_test.go`, `personal_drive_test.go` (owned broadcast channel collection), `fake_test.go`/`fake_difference_test.go` (rewritten against `faketg`) and `peer_resolution_test.go` cases, plus `TestDeleteMessagesBatchesOf100`, `TestZeroAccessHashRefused`, `TestSavedMessagesNoPreview`, `TestAuthErrorsTyped`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/tgclient/rpc/... ./internal/tgclient/authrpc/...
+go test -mod=readonly -race ./internal/tgclient/rpc/... ./internal/tgclient/authrpc/...
+gofmt -l internal/tgclient/rpc internal/tgclient/authrpc
+```
+
+**Commits.** `add channel history and message rpcs`, `add login rpcs`.
+
 ### 5.5 Lane L5 — internal/tgclient/faketg
 
-Implement internal/tgclient/faketg. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Build `faketg`, the hand-written fake of the whole `tgclient` exported method set, with per-channel message history, differences, documents, multiple accounts and scripted faults, so every later phase tests against realistic Telegram behaviour.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/tgclient/faketg/`.
+
+**Read.** `docs/plan.md` (testing strategy and evidence classes); `docs/reference/tdrive-port-map.md` (the TDrive fake to port); the exported method sets of L1–L4 as the prelude contracts state them.
+
+**Rules.**
+- Mirror the concrete exported methods of `tgclient` adapters, not consumer ports (later consumers' ports are subsets). Add a compile-time assertion for each mirrored type.
+- Scriptable faults: `FloodWaitError` (including premium), accepted-with-error, `ErrSendOutcomeUnknown`, transport drop, expired file reference, CDN redirect, latency, and deleted messages.
+- Each account and channel has its own history, `pts` and message-ID sequence. Random-ID dedup returns the original message, as Telegram does.
+- Deterministic: no wall-clock sleeps (use the injected clock), and safe for concurrent use.
 
 Verified source instructions for this lane:
 
@@ -211,17 +314,35 @@ Verified source instructions for this lane:
 |---|---:|---|---|---|
 | `backend/tgclient/fake.go` | 1,154 | PORT-PARTIAL | `internal/tgclient/faketg` (L5) | See section 7.1 for what to keep and what must change |
 
-Commit this lane as `implement phase 04 internal tgclient faketg` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/tgclient/fake.go`: `type Fake struct {`; `type SentControl struct {`; `type SentFile struct {`; `type HiddenJoinRequest struct {`; `func NewFake(selfID int64) *Fake {`; `func (f *Fake) InjectTransientFailures(n int) {`; `func (f *Fake) SetSelfID(id int64) {`; `func (f *Fake) Close() {}`
 
+**Tests (binding names).** `TestFakeMirrorsTgclient` (method-set comparison by reflection), `TestFakeRandomIDDedup`, `TestFakePerChannelIsolation`, `TestFakeDifferencePages`, `TestFakeScriptedFaults` (one case per fault), `TestFakeTwoAccounts`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/tgclient/faketg/...
+go test -mod=readonly -race ./internal/tgclient/faketg/...
+gofmt -l internal/tgclient/faketg
+```
+
+**Commits.** `add scriptable fake telegram client`.
+
 ### 5.6 Lane L6 — internal/identity
 
-Implement internal/identity. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Own the Telegram account binding: api_id and api_hash credentials, the hand-rolled login state machine that keeps the phone code hash across attempts, the sealed session storage, and the account repository.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/identity/`, `internal/storage/accountrepo/` (the new repository over `telegram_accounts`, `docs/spec/schema.md` §5.3 and §6).
+
+**Read.** Legacy `docs/butterDBCore.md` lines 851–893 (credentials, session and login state machine), 704–730 (secret files); `docs/spec/admin-api.md` §8.1 (states the relay exposes) and §16.8 (`LoginRelay`, which `identity` satisfies); `docs/spec/security.md` §5.4 and §16 (`TestSessionFileSealed`).
+
+**Rules.**
+- Never use gotd's one-shot `auth.Flow`. Keep the code hash so an invalid code is retryable in place. 2FA fetches the hint best-effort.
+- Credentials and session go through `secretfile`. The session is sealed with `keyring.SessionKey()`, so the file holds no raw gotd auth key, and opening with another server key fails.
+- `identity.Snapshot` carries state, login metadata and an account summary, and by construction has no field that can hold session bytes or the code hash.
+- Two instances can coexist (primary and replica) with separate files.
 
 Verified source instructions for this lane:
 
@@ -230,12 +351,22 @@ Verified source instructions for this lane:
 | `backend/auth/auth.go` | 230 | PORT-PARTIAL | `internal/tgclient/authrpc` (L4), `internal/identity` (L6), `internal/tgclient/conn` (L1) | `authrpc`: `SendCode`, `SignIn`, mapping `auth.ErrPasswordAuthNeeded` to a password step, `AccountGetPassword` hint, `Password`, auth status. `identity`: api_id and api_hash save and load through `secretfile` (TDrive `imp_config.json`). `conn`: `ConnectWithOptions` builds `telegram.NewClient(apiID, apiHash, options)` with the session store. Drop the blocking `StartLogin` loop; butterDB relays one step per admin API call |
 | `backend/services/auth/service.go` | 261 | PORT-PARTIAL | `internal/identity` (L6) | Keep: the login stage machine (`loginStage`, `accepts`, `resetAttempt`, `finishAttempt`), code rejection allowing a new code, password with hint, "needs setup" when no credentials exist. Change: the channel-based UI handshake (`WaitCode`, `WaitPassword`, `sendLatest`, `drain`, `EventSink`) becomes explicit steps (submit phone, submit code, submit password) that return the next step; account binding records the user ID from `users.getUsers(self)` |
 
-Commit this lane as `implement phase 04 internal identity` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/auth/auth.go`: `type ImpCredentials struct {`; `func GetConfigPath() string {`; `func SaveImpCredentials(id int, hash string) error {`; `func LoadImpCredentials() (ImpCredentials, error) {`; `func Connect() (*telegram.Client, error) {`; `func ConnectWithOptions(options telegram.Options) (*telegram.Client, error) {`; `func CheckLogin(ctx context.Context) (bool, error) {`; `func StartLogin(ctx context.Context, client *telegram.Client, ch getChannel, phone string) error {`
 - `backend/services/auth/service.go`: `type EventSink interface {`; `type Service struct {`; `func NewService(events EventSink) *Service {`; `func (s *Service) StartLogin(ctx context.Context, phoneNumber string) error {`; `func (s *Service) IsLoggedIn(ctx context.Context) bool {`; `func (s *Service) SystemStatus() string {`; `func (s *Service) SaveSetup(apiID int, apiHash string) string {`; `func (s *Service) SubmitCode(code string) {`
+
+**Tests (binding names).** the carried `peer_resolution_test.go`, `session_storage_test.go` and `services/auth/service_test.go` cases, plus `TestSessionFileSealed` (security §16), `TestCodeInvalidRetryInPlace`, `TestPasswordHintBestEffort`, `TestSnapshotHasNoSecrets`, `TestAccountRepoRoundTrip`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/identity/... ./internal/storage/accountrepo/...
+go test -mod=readonly -race ./internal/identity/... ./internal/storage/accountrepo/...
+gofmt -l internal/identity internal/storage/accountrepo
+```
+
+**Commits.** `add telegram login state machine`, `add sealed session storage and account repository`.
 
 ## 6. Integration lane
 
