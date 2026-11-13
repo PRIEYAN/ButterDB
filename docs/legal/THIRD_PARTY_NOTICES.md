@@ -86,12 +86,12 @@ that lands in two destinations has one row per destination.
 | `backend/processlock/process_unix.go` | `internal/platform/processlock` | ported | 01 | ported bea07c5 |
 | `backend/auth/private_file.go` | `internal/platform/secretfile` | ported | 01 | ported 5e14d5f |
 | `backend/services/file/limits.go` | `internal/domain/limits` | ported | 01 | referenced b301829 |
-| `backend/projection/wire.go` | `internal/wire` | ported | 02 | planned |
-| `backend/projection/types.go` | `internal/wire` | ported | 02 | planned |
-| `backend/crypto/stream.go` (constants, size arithmetic, nonce and header layout) | `internal/crypto/format` | ported | 02 | planned |
-| `backend/crypto/random_access.go` (`StoredOffset`, `ciphertextChunkOffset`) | `internal/crypto/format` | ported | 02 | planned |
-| `backend/projection/schema.go` | `internal/storage/schema` | ported | 02 | planned |
-| `backend/sync/initial_scan_spool.go` (DDL) | `internal/storage/schema` | ported | 02 | planned |
+| `backend/projection/wire.go` | `internal/wire` | ported | 02 | ported eeb198b |
+| `backend/projection/types.go` | `internal/wire` | ported | 02 | not used: the Op and OpType contract came from wire-format.md section 2 |
+| `backend/crypto/stream.go` (constants, size arithmetic, nonce and header layout) | `internal/crypto/format` | ported | 02 | ported 1b2385f |
+| `backend/crypto/random_access.go` (`StoredOffset`, `ciphertextChunkOffset`) | `internal/crypto/format` | ported | 02 | ported 1b2385f |
+| `backend/projection/schema.go` | `internal/storage/schema` | ported | 02 | not used: DDL taken from schema.md section 4.1, file not opened |
+| `backend/sync/initial_scan_spool.go` (DDL) | `internal/storage/schema` | ported | 02 | not used: DDL taken from schema.md section 4.1, file not opened |
 | `backend/projection/log.go` | `internal/projection/log` | ported | 03 | planned |
 | `backend/projection/rebuild.go` | `internal/projection/rebuild` | ported | 03 | planned |
 | `backend/projection/encryption_rebuild.go` | `internal/projection/rebuild` | ported | 03 | planned |
@@ -152,12 +152,12 @@ that lands in two destinations has one row per destination.
 
 | TDrive source | butterDB destination | Kind | Phase | Status |
 | --- | --- | --- | --- | --- |
-| `backend/applog/applog.go` | `internal/platform/logging` | design reference | 01 | planned |
-| `internal/app/operation.go` | `internal/domain/errs` | design reference | 01 | planned |
+| `backend/applog/applog.go` | `internal/platform/logging` | design reference | 01 | not used: pattern only, not consulted |
+| `internal/app/operation.go` | `internal/domain/errs` | design reference | 01 | referenced b301829 |
 | `backend/daemon/server.go` | `internal/lifecycle`, `internal/core` | design reference | 01 | referenced bc16165 |
 | `cmd/tdrived/main.go` | `cmd/butterdbd` | design reference | 01 | referenced 21a40db |
 | `cmd/tdrive/output.go` | `cmd/butterdbd` | design reference | 01 | referenced 21a40db |
-| `backend/storage_sqlite.go` | `internal/storage/sqlitedb` | design reference | 02 | planned |
+| `backend/storage_sqlite.go` | `internal/storage/sqlitedb` | design reference | 02 | referenced 9d868f4 |
 | `backend/projection/apply.go` | `internal/projection/apply` | design reference | 03 | planned |
 | `backend/projection/writable_apply.go` | `internal/projection/apply` | design reference | 03 | planned |
 | `backend/projection/encryption.go` | `internal/storage/bucketrepo` | design reference | 03 | planned |
