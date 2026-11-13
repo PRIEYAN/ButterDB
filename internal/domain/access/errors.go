@@ -6,4 +6,5 @@ var (
 	ErrInvalidAccessKeyID = errors.New("invalid access key id")
 	ErrInvalidAction      = errors.New("invalid access action")
 	ErrInvalidScope       = errors.New("invalid access scope")
+	ErrInvalidKeyName     = errors.New("invalid access key name")
 )
