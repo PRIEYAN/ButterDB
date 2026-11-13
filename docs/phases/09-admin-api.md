@@ -37,49 +37,297 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/adminapi/setup (setup token claim, api_id save, relayed login steps)
 
-Implement internal/adminapi/setup (setup token claim, api_id save, relayed login steps). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Own the server-claim state and the Telegram link relay: mint and log the setup token, let exactly one GUI claim the server, and relay api_id/api_hash, phone, code and 2FA steps to `internal/identity` without exposing session material.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/adminapi/setup/`.
 
-Verified source instructions for this lane:
+**Read.** `docs/spec/admin-api.md` §5.1 (claim states), §5.2 (setup token), §5.7 (`HashSecret`), §7.1–§7.2, §8.1–§8.8 (relay state machine and endpoints), §4.2 (codes), and the `LoginRelay` port in §16.8; `docs/spec/security.md` §7. TDrive reference for the login steps behind the relay: `/home/prieyan/weeb/TDrive/backend/auth/auth.go` (`StartLogin`, `signInWithPassword`). Phase 04's `internal/identity` already implements the state machine; this lane only relays.
 
-| TDrive file | Lines | Verdict | Destination | Keep, change, and drop |
-|---|---:|---|---|---|
-| `backend/daemon/auth_drive.go` | 519 | PATTERN-ONLY | `internal/adminapi/setup` (L1) | `authSetup` (save api_id and api_hash), `authStatus`, `authLogin` (start with phone), `completeLogin`; one login flow at a time guarded by a mutex and an "active" flag. butterDB relays the same steps over HTTPS behind the setup token (A2) |
+**Contracts.**
 
-Commit this lane as `implement phase 09 internal adminapi setup setup token claim api` after its package tests pass.
+```go
+package setup
+
+type LoginRelay interface {
+	Status(ctx context.Context) (identity.Snapshot, error)
+	SaveCredentials(ctx context.Context, apiID int, apiHash string) error
+	DeleteCredentials(ctx context.Context) error
+	Start(ctx context.Context, phone string) (identity.Snapshot, error)
+	SubmitCode(ctx context.Context, loginID, code string) (identity.Snapshot, error)
+	SubmitPassword(ctx context.Context, loginID, password string) (identity.Snapshot, error)
+	Cancel(ctx context.Context) (identity.Snapshot, error)
+	Unlink(ctx context.Context) (identity.Snapshot, error)
+}
+
+type ClaimStore interface {
+	ClaimState(ctx context.Context) (string, error)
+	ReplaceSetupToken(ctx context.Context, hash [32]byte, expiresAt time.Time) error
+	ConsumeSetupTokenAndAddDevice(ctx context.Context, hash [32]byte, now time.Time, dev adminrepo.NewDevice) error
+}
+
+type Dependencies struct {
+	Relay   LoginRelay
+	Claims  ClaimStore
+	Tokens  DeviceIssuer
+	Clock   clock.Clock
+	Random  io.Reader
+	Logger  *slog.Logger
+	TTL     time.Duration
+}
+
+type DeviceIssuer interface {
+	NewDeviceToken() (token string, deviceID string, hash [32]byte, err error)
+}
+
+func New(deps Dependencies) (*Service, error)
+func (s *Service) MintSetupTokenIfUnclaimed(ctx context.Context) (string, time.Time, error)
+func (s *Service) Claim(ctx context.Context, token string, device adminv1.DeviceInfo) (adminv1.ClaimResult, error)
+func (s *Service) Relay() LoginRelay
+```
+
+`DeviceIssuer` is satisfied by `*session.Tokens` (L2). `ClaimStore` is satisfied by `adminrepo` (L2). Declare both here, and never import L2 code.
+
+**Rules.**
+- Token format `bdst1_` + 32 base32 characters (20 random bytes). Store only `HashSecret(KindSetup, token)`. Log the token exactly once at `WARN`, with the §5.2 field names.
+- The claim consumes the token and inserts the first device in **one** transaction. A second claim gets `already_claimed`. Compare in constant time.
+- The relay never returns or logs api_hash, the phone code hash, the password, session bytes, or the full phone number. `identity.Snapshot` has no field for them.
+- `PHONE_CODE_INVALID` and a wrong password are retryable in place, up to 5 attempts each. A code expiry ends the attempt. A submit in the wrong stage is rejected with the §4.2 code.
+- An attempt times out after 15 minutes. If a different account than the linked one logs in, the result is `account_mismatch`.
+
+**Tests (binding names).** Every admin-api §17 `setup` test: `TestSetupTokenPrintedOnce`, `TestSetupTokenReplacedOnRestart`, `TestClaimConsumesToken`, `TestClaimAfterClaimed`, `TestCodeInvalidRetryInPlace`, `TestPasswordInvalidRetryInPlace`, `TestAttemptsExhausted`, `TestCodeExpiredEndsAttempt`, `TestSubmitInWrongStageRejected`, `TestAttemptTimeout`, `TestAccountMismatch`, `TestStatusNeverContainsSecrets` (driven by `faketg` through a real `identity` service), `TestUnlinkCallsLogOutBestEffort`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/adminapi/setup/...
+gofmt -l internal/adminapi/setup
+```
+
+**Commits.** `add setup token minting and server claim`, `add telegram login relay for the admin api`.
 
 ### 5.2 Lane L2 — internal/adminapi/session + internal/storage/adminrepo (device tokens, pairing via Saved Messages code, admin-token CLI code)
 
-Implement internal/adminapi/session + internal/storage/adminrepo (device tokens, pairing via Saved Messages code, admin-token CLI code). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Authenticate every admin request with device tokens, issue and rotate them, pair additional devices with one-time codes, serve the local control socket that `butterdbd admin-token` uses, rate-limit authentication, and persist all of it in `control.db`.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/adminapi/session/`, `internal/storage/adminrepo/`. The admin tables already exist in `control/0001_init.sql` (phase 02 L4, `docs/spec/schema.md` §5.2 and §6); add no migration.
 
-Commit this lane as `implement phase 09 internal adminapi session internal storage ad` after its package tests pass.
+**Read.** `docs/spec/admin-api.md` §5.3 (device tokens), §5.4 (pairing), §5.5 (control socket), §5.6 (rate limits), §5.7 (`HashSecret`), §7.3–§7.5, §15 (tables `admin_meta`, `admin_setup_token`, `admin_devices`, `admin_pairing_codes`, `admin_audit`), §16.3 DTOs; `docs/spec/schema.md` for the same tables (schema.md wins on column names); `docs/spec/security.md` §7.
+
+**Contracts.**
+
+```go
+package session
+
+type SecretKind string
+
+const (
+	KindSetup   SecretKind = "setup"
+	KindDevice  SecretKind = "device"
+	KindPairing SecretKind = "pairing"
+)
+
+func HashSecret(kind SecretKind, normalised string) [32]byte
+func NormalisePairingCode(input string) (string, error)
+
+type DeviceStore interface {
+	Device(ctx context.Context, id string) (adminrepo.Device, error)
+	InsertDevice(ctx context.Context, d adminrepo.NewDevice) error
+	Rotate(ctx context.Context, id string, newHash [32]byte, now time.Time) error
+	MarkNewTokenUsed(ctx context.Context, id string) error
+	Revoke(ctx context.Context, id string, now time.Time) error
+	TouchSeen(ctx context.Context, id string, ip string, now time.Time) error
+	RevokeIdle(ctx context.Context, before time.Time) (int, error)
+	ReplacePairingCode(ctx context.Context, delivery string, hash [32]byte, expiresAt time.Time) error
+	ConsumePairingCode(ctx context.Context, hash [32]byte, now time.Time, d adminrepo.NewDevice) error
+	RecordPairingFailure(ctx context.Context) (consecutive int, err error)
+	InvalidatePairingCodes(ctx context.Context) error
+}
+
+type SavedMessagesSender interface {
+	SendToSavedMessages(ctx context.Context, text string) error
+}
+
+type Tokens struct{}
+
+func NewTokens(random io.Reader) *Tokens
+func (t *Tokens) NewDeviceToken() (token string, deviceID string, hash [32]byte, err error)
+
+func NewAuthenticator(store DeviceStore, limits *Limiter, clock clock.Clock) *Authenticator
+func (a *Authenticator) Middleware(next http.Handler) http.Handler
+func DeviceFromContext(ctx context.Context) (adminrepo.Device, bool)
+
+func NewPairing(store DeviceStore, sender SavedMessagesSender, tokens *Tokens, clock clock.Clock, random io.Reader) *Pairing
+func (p *Pairing) Request(ctx context.Context, delivery string, device adminv1.DeviceInfo) (time.Time, error)
+func (p *Pairing) Complete(ctx context.Context, code string, device adminv1.DeviceInfo) (adminv1.DeviceTokenResult, error)
+func (p *Pairing) HostCode(ctx context.Context) (string, time.Time, error)
+
+func NewLimiter(cfg LimiterConfig, clock clock.Clock) *Limiter
+
+func ServeControlSocket(ctx context.Context, path string, h ControlHandler) error
+type ControlHandler interface {
+	AdminToken(ctx context.Context) (kind string, value string, expiresAt time.Time, err error)
+}
+```
+
+`SavedMessagesSender` is satisfied by the phase 04 `tgclient/rpc` client. Declare it here.
+
+**Rules.**
+- Device token `bdt1_<16 base32 id>_<52 base32 secret>`. Store only `HashSecret(KindDevice, token)`. Accept it only from `Authorization: Bearer`.
+- Middleware order exactly as §5.3. A failed check counts against the `auth_failure` limiter before the response is written.
+- Rotation keeps `prev_token_hash` valid for 10 minutes, or until the new token is first used.
+- `last_seen` writes are coalesced to at most one per device per 60 s.
+- Pairing codes are Crockford base32, 10 characters, valid 10 minutes, single use, at most one active per delivery method. Five consecutive failures invalidate every code. Saved Messages delivery is limited to 5 sends per hour. If the send fails, delete the code row.
+- The control socket has mode `0600` and speaks one JSON line per connection (§5.5). It returns a setup token while unclaimed and a pairing code once claimed.
+- No SQLite transaction is held while sending to Telegram.
+
+**Tests (binding names).** Every admin-api §17 `session` test: `TestDeviceTokenFormat`, `TestSecretHashDomainSeparated`, `TestRotateGraceWindowEndsOnFirstUse`, `TestRotateGraceWindowEndsAfterTenMinutes`, `TestRevokedDeviceRejected`, `TestLastSeenCoalesced`, `TestIdleRevokeSweeper`, `TestPairingCodeNormalisation`, `TestPairingCodeSingleUse`, `TestPairingCodeExpiry`, `TestFiveFailuresInvalidateCodes`, `TestSavedMessagesSendFailureDeletesCode`, `TestRateLimiterPerScope`, `TestAuthFailureBlock`, `TestControlSocketMode0600`, `TestAdminTokenWithoutRunningServer`. For `adminrepo`, add `TestAdminTablesPresent` and `TestConsumePairingCodeAtomic`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/adminapi/session/... ./internal/storage/adminrepo/...
+gofmt -l internal/adminapi/session internal/storage/adminrepo
+```
+
+**Commits.** `add admin repository`, `add device tokens and auth middleware`, `add device pairing and control socket`.
 
 ### 5.3 Lane L3 — internal/adminapi/tlscert (self-signed cert, fingerprint)
 
-Implement internal/adminapi/tlscert (self-signed cert, fingerprint). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Provide the admin listener's TLS material: a P-256 key generated once and a self-signed certificate renewed with the same key. The SPKI fingerprint is what the GUI pins (A3).
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/adminapi/tlscert/`.
 
-Commit this lane as `implement phase 09 internal adminapi tlscert self signed cert fi` after its package tests pass.
+**Read.** `docs/spec/admin-api.md` §2.2–§2.3 (contract and fingerprint forms); `docs/spec/operations.md` data-directory rows `tls/admin.key` and `tls/admin.crt`; `docs/spec/security.md` §7.
+
+**Contract (binding, from §2.3).**
+
+```go
+package tlscert
+
+type Material struct {
+	Certificate tls.Certificate
+	SPKISHA256  [32]byte
+	NotAfter    time.Time
+}
+
+func LoadOrCreate(dir string, serverID string, hostnames []string, now time.Time) (Material, error)
+func Fingerprint(spki [32]byte) string
+func DisplayFingerprint(spki [32]byte) string
+```
+
+**Rules.**
+- ECDSA P-256 key as PEM PKCS#8 in `tls/admin.key` (mode `0600`), written through `internal/platform/secretfile`. Certificate as PEM in `tls/admin.crt` (mode `0644`).
+- CN `butterdbd admin <server_id>`. SANs: `localhost`, `127.0.0.1`, `::1`, `os.Hostname()`, and each configured hostname. Validity 825 days.
+- On load, reissue **with the same key** if fewer than 30 days remain or the SAN set changed. The fingerprint must not change on renewal.
+- Fingerprint: SHA-256 of the leaf's DER `SubjectPublicKeyInfo`. `Fingerprint` returns `SHA256:` + 64 lowercase hex characters. `DisplayFingerprint` returns 16 space-separated groups of 4 hex characters.
+- Reject a key file with group or other permission bits set.
+
+**Tests (binding names).** `TestLoadOrCreateGeneratesP256Key`, `TestRenewalKeepsSPKI`, `TestSANChangeReissues`, `TestKeyFileMode0600`, `TestFingerprintFormats`, plus `TestLoadExistingIsStable` and `TestRejectsGroupReadableKey`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/adminapi/tlscert/...
+gofmt -l internal/adminapi/tlscert
+```
+
+**Commit.** `add admin tls certificate with stable spki pin`.
 
 ### 5.4 Lane L4 — internal/adminapi/handlers
 
-Implement internal/adminapi/handlers. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Implement the admin HTTP API: router, JSON codec, error envelope, and every resource endpoint in admin-api §6 except the replica routes, which answer `501 not_implemented` until phase 12.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/adminapi/handlers/`, except `replica.go` and `replica_test.go`, which phase 12 L6 adds later.
 
-Commit this lane as `implement phase 09 internal adminapi handlers` after its package tests pass.
+**Read.** `docs/spec/admin-api.md` §2.5 (hardening), §3 (conventions), §4 (envelope and code table), §6 (endpoint index), §7, §9–§12, §14, §16.2–§16.6 (DTOs, committed by the prelude in `api/adminv1`), and §16.8 (ports declared here).
+
+**Contracts.** Declare exactly the ports listed in admin-api §16.8 (`BucketService`, `KeyService`, `ObjectLister`, `ObjectWriter`, `ObjectServer`, `Presigner`, `StatusSource`, `AuditLog`), plus:
+
+```go
+package handlers
+
+type Dependencies struct {
+	Buckets  BucketService
+	Keys     KeyService
+	Lister   ObjectLister
+	Writer   ObjectWriter
+	Server   ObjectServer
+	Presign  Presigner
+	Status   StatusSource
+	Audit    AuditLog
+	Setup    SetupEndpoints
+	Pairing  PairingEndpoints
+	Auth     func(http.Handler) http.Handler
+	Clock    clock.Clock
+	Config   Config
+}
+
+type SetupEndpoints interface {
+	ServerInfo(ctx context.Context) (adminv1.ServerInfo, error)
+	Claim(ctx context.Context, token string, device adminv1.DeviceInfo) (adminv1.ClaimResult, error)
+	Relay() setup.LoginRelay
+}
+
+type PairingEndpoints interface {
+	Request(ctx context.Context, delivery string, device adminv1.DeviceInfo) (time.Time, error)
+	Complete(ctx context.Context, code string, device adminv1.DeviceInfo) (adminv1.DeviceTokenResult, error)
+}
+
+func NewRouter(deps Dependencies) (http.Handler, error)
+func MapError(err error) adminv1.APIError
+```
+
+`SetupEndpoints` and `PairingEndpoints` mirror the L1 and L2 methods. Import only `internal/adminapi/setup` for the `LoginRelay` type; never call L1 or L2 constructors.
+
+**Rules.**
+- JSON bodies are capped at 1 MiB, and unknown fields are rejected. The object key travels in the `key` query parameter, never in the path.
+- Every error uses the §4.1 envelope, and every domain sentinel maps to a §4.2 code. `MapError` must be total.
+- Uploads require `Content-Length`, stream to `ObjectWriter.Put` without buffering, and are acknowledged only after commit (D8). Idempotent replays honour `Idempotency-Key` scoped by device (E9).
+- Deleting a missing object returns `204`. Batch delete reports per-key results.
+- Presign requires that the chosen access key holds `read`.
+- Every mutation writes an audit record. Audit records contain no secrets.
+- Replica routes return `501 not_implemented` (`TestReplicaRoutes501BeforePhase12`).
+
+**Tests (binding names).** Every admin-api §17 `handlers` test: `TestErrorEnvelopeShape`, `TestEveryCodeMapped`, `TestUnknownFieldRejected`, `TestJSONBodyLimit`, `TestObjectKeyFromQuery`, `TestUploadRequiresContentLength`, `TestUploadAcknowledgedAfterCommit`, `TestUploadIdempotentReplay`, `TestUploadIdempotencyConflict`, `TestUploadCommitOutcomeUnknown`, `TestDeleteMissingObject204`, `TestBatchDeletePartialFailure`, `TestPresignRequiresReadScope`, `TestReplicaRoutes501BeforePhase12`, `TestAuditRecordsMutations`. Use hand-written fakes for every port.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/adminapi/handlers/...
+gofmt -l internal/adminapi/handlers
+```
+
+**Commits.** `add admin api router codec and error mapping`, `add admin server claim pairing and device endpoints`, `add admin bucket key and object endpoints`, `add admin status usage and audit endpoints`.
 
 ### 5.5 Lane L5 — api/adminv1 client (client.go and friends; DTO files belong to the prelude)
 
-Implement api/adminv1 client (client.go and friends; DTO files belong to the prelude). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Write the Go client in `api/adminv1` that the Fyne app (phase 10) uses, including TLS pinning and certificate probing. The DTO files already exist from the prelude; do not edit them.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `api/adminv1/client.go`, `api/adminv1/client_objects.go`, `api/adminv1/client_test.go`, `api/adminv1/trust.go`, `api/adminv1/trust_test.go`. Every other file in `api/adminv1` belongs to the prelude.
 
-Commit this lane as `implement phase 09 api adminv1 client client go and friends dto ` after its package tests pass.
+**Read.** `docs/spec/admin-api.md` §16.1 (file list), §16.7 (binding client contract and client rules table), §4.1 (envelope), §5.3 (bearer only).
+
+**Contract.** Implement every `func (c *Client) ...` method listed in admin-api §16.7, plus `NewClient`, `Trust`, `ProbeCertificate`, `PinMismatchError` and `APIError` decoding, exactly as specified there. `api/...` imports only the standard library.
+
+**Rules (from the §16.7 client rules table).**
+- Pinned trust: TLS 1.3 minimum, `InsecureSkipVerify` with a `VerifyConnection` that compares the leaf SPKI SHA-256 in constant time. On mismatch, return `*PinMismatchError` before any request byte is sent.
+- `http://` is accepted only for `localhost`, `127.0.0.1` or `::1`.
+- `ProbeCertificate` completes a handshake and sends no HTTP request.
+- `PutObject` sets `Content-Length` and never buffers. The client never retries by itself.
+- The JSON timeout defaults to 75 s. Streaming methods use only the caller's context.
+- The token is never part of an error string, and `SetToken` is safe for concurrent use.
+
+**Tests (binding names).** `TestPinnedTrustAcceptsMatchingSPKI`, `TestPinnedTrustRejectsMismatchBeforeRequest`, `TestProbeCertificateSendsNoRequest`, `TestAPIErrorDecoding`, `TestHeadErrorFromHeader`, `TestPutObjectStreamsWithoutBuffering`, `TestTokenNotInErrorText`, plus `TestPlainHTTPOnlyLoopback`. Use `httptest.NewUnstartedServer` with TLS.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./api/adminv1/...
+gofmt -l api/adminv1
+test "$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./api/adminv1 | sort -u)" = "github.com/PRIEYAN/ButterDB/api/adminv1"
+```
+
+**Commits.** `add admin api go client with pinned trust`, `add admin api client object streaming`.
 
 ## 6. Integration lane
 

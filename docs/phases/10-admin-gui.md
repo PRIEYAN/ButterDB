@@ -38,51 +38,204 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — apps/admin/internal/ui/connect (server URL, cert pin, setup token, device token in OS keychain)
 
-Implement apps/admin/internal/ui/connect (server URL, cert pin, setup token, device token in OS keychain). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Module rules for every phase 10 lane.** Work inside `apps/admin`, which is the separate Go module `github.com/PRIEYAN/ButterDB/apps/admin`. It builds with `CGO_ENABLED=1`, and on Linux it needs the OpenGL and X11 headers listed in `docs/spec/admin-gui.md` §17.3. Follow the import rules table in admin-gui §2 (checked later by `TestImportRules`). Never import another screen package. View models are pure Go and never import `fyne.io/...`. Every view model follows the §3.4 shape: synchronous commands, state published through `model.Observable`. Views call commands with `go`. Show errors only through `model.Describe` (§12), never raw error text. Never log or persist tokens, secrets, api_hash, phone codes or passwords (§5.4, §15). Run tests with the Fyne test driver; no display is needed.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Objective.** Build the connect flow: server profiles, first-contact TOFU fingerprint confirmation, claim with a setup token, pairing by code, token rotation, fingerprint-change handling, and device-token storage in the OS keychain with a file fallback.
 
-Commit this lane as `implement phase 10 apps admin internal ui connect server url cer` after its package tests pass.
+**Owned paths.** `apps/admin/internal/ui/connect/` (including `vm/`, `credstore/`, `profilestore/`).
+
+**Read.** `docs/spec/admin-gui.md` §3.1–§3.4, §4.1–§4.7, §5.1–§5.4, §12, §16.2 (the `ui/connect/*` rows); `docs/spec/admin-api.md` §5.2–§5.4 and §16.7 (`ProbeCertificate`, `Trust`, `PinMismatchError`).
+
+**Contracts.** Declare the `Dialer` and `ConnectClient` ports in `connect/vm` exactly as in admin-gui §3.3, with method signatures copied from `*adminv1.Client`. `credstore` implements the `model.TokenStore` interface from the prelude (§3.1) three ways: a keychain store (`github.com/zalando/go-keyring`), a `0600` file fallback written atomically, and a memory store. `profilestore` implements `model.ProfileStore` over `servers.json`, keyed by server ID. Export `func NewView(vm *vm.ViewModel, nav shell.Navigator) fyne.CanvasObject` from `connect`, plus the `vm.New...` constructor with the §3.4 shape.
+
+**Rules.**
+- URLs are normalised. `http://` is allowed only for loopback hosts.
+- Show the fingerprint in display form and require explicit confirmation before pinning. If the `server-info` fingerprint disagrees with the probed certificate, abort.
+- On claim or pairing, store the token **before** saving the profile, and clear the setup-token field afterwards. On rotation, store the new token before switching to it. If storing fails, keep the old token.
+- A pin mismatch blocks the connection, and only an explicit "trust new key" confirmation re-pins (§4.4).
+- An `unauthenticated` response deletes the stored token and routes back to connect.
+
+**Tests (binding names).** Every admin-gui §16.2 row for `ui/connect/vm`, `ui/connect/credstore` and `ui/connect/profilestore`.
+
+**Verify.**
+
+```bash
+cd apps/admin
+CGO_ENABLED=1 go vet -mod=readonly ./internal/ui/connect/...
+CGO_ENABLED=1 go test -mod=readonly -race ./internal/ui/connect/...
+gofmt -l internal/ui/connect
+```
+
+**Commits.** `add connect view model and pinning flow`, `add keychain and file token stores`, `add server profile store`, `add connect screens`.
 
 ### 5.2 Lane L2 — apps/admin/internal/ui/telegramlink (api_id, api_hash, phone, code, 2FA wizard)
 
-Implement apps/admin/internal/ui/telegramlink (api_id, api_hash, phone, code, 2FA wizard). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Module rules for every phase 10 lane.** Work inside `apps/admin`, which is the separate Go module `github.com/PRIEYAN/ButterDB/apps/admin`. It builds with `CGO_ENABLED=1`, and on Linux it needs the OpenGL and X11 headers listed in `docs/spec/admin-gui.md` §17.3. Follow the import rules table in admin-gui §2 (checked later by `TestImportRules`). Never import another screen package. View models are pure Go and never import `fyne.io/...`. Every view model follows the §3.4 shape: synchronous commands, state published through `model.Observable`. Views call commands with `go`. Show errors only through `model.Describe` (§12), never raw error text. Never log or persist tokens, secrets, api_hash, phone codes or passwords (§5.4, §15). Run tests with the Fyne test driver; no display is needed.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Objective.** Build the Telegram link wizard as a reusable `LoginWizard` (phase 12 reuses it for the replica account). It covers api_id and api_hash, phone, code, 2FA password with hint, cancel, flood-wait countdown, and resuming a login already in progress.
 
-Commit this lane as `implement phase 10 apps admin internal ui telegramlink api id ap` after its package tests pass.
+**Owned paths.** `apps/admin/internal/ui/telegramlink/` (including `vm/`).
+
+**Read.** `docs/spec/admin-gui.md` §6.1–§6.5, §12, §16.2 (the `ui/telegramlink*` rows); `docs/spec/admin-api.md` §8.1–§8.8 (relay states and codes).
+
+**Contracts.** Declare `LoginFlow` in `telegramlink/vm` exactly as admin-gui §6.1 defines it. Export:
+
+```go
+package telegramlink
+
+type LoginWizard struct{}
+
+func NewLoginWizard(v *vm.ViewModel, onDone func()) *LoginWizard
+func (w *LoginWizard) Object() fyne.CanvasObject
+```
+
+**Rules.**
+- The step always follows the server's `next` field, never local guessing.
+- An invalid code or password keeps the user on the same step with the field focused and cleared. A code expiry or exhausted attempts returns to the phone step.
+- A flood wait disables submit and shows a countdown to `until`.
+- Clear secret fields (api_hash, code, password) from memory and widgets as soon as they are submitted.
+- Show the §6.4 account-safety notice before the first submission.
+
+**Tests (binding names).** Every admin-gui §16.2 test for `ui/telegramlink/vm` and `ui/telegramlink`.
+
+**Verify.**
+
+```bash
+cd apps/admin
+CGO_ENABLED=1 go vet -mod=readonly ./internal/ui/telegramlink/...
+CGO_ENABLED=1 go test -mod=readonly -race ./internal/ui/telegramlink/...
+gofmt -l internal/ui/telegramlink
+```
+
+**Commits.** `add telegram link view model`, `add reusable telegram login wizard`.
 
 ### 5.3 Lane L3 — apps/admin/internal/ui/{buckets,keys}
 
-Implement apps/admin/internal/ui/{buckets,keys}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Module rules for every phase 10 lane.** Work inside `apps/admin`, which is the separate Go module `github.com/PRIEYAN/ButterDB/apps/admin`. It builds with `CGO_ENABLED=1`, and on Linux it needs the OpenGL and X11 headers listed in `docs/spec/admin-gui.md` §17.3. Follow the import rules table in admin-gui §2 (checked later by `TestImportRules`). Never import another screen package. View models are pure Go and never import `fyne.io/...`. Every view model follows the §3.4 shape: synchronous commands, state published through `model.Observable`. Views call commands with `go`. Show errors only through `model.Describe` (§12), never raw error text. Never log or persist tokens, secrets, api_hash, phone codes or passwords (§5.4, §15). Run tests with the Fyne test driver; no display is needed.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Objective.** Build the bucket screens (list, create, configure, delete) and the access-key screens (list, create with a secret shown once, edit scope, revoke).
 
-Commit this lane as `implement phase 10 apps admin internal ui buckets keys` after its package tests pass.
+**Owned paths.** `apps/admin/internal/ui/buckets/`, `apps/admin/internal/ui/keys/` (each including `vm/`).
+
+**Read.** `docs/spec/admin-gui.md` §8, §9, §12, §16.2 (the `ui/buckets*` and `ui/keys*` rows); `docs/spec/admin-api.md` §10, §11; `docs/spec/s3-api.md` §4.9–§4.10 (key scopes and actions).
+
+**Contracts.** Declare each `vm.Client` port exactly as in admin-gui §3.3. Export `NewView(vm, nav) fyne.CanvasObject` from each screen package.
+
+**Rules.**
+- Check bucket names against S3 naming rules before sending, but show the server's error when it disagrees.
+- Deleting a non-empty bucket shows the `bucket_not_empty` description, never a raw error.
+- The secret dialog cannot be dismissed until the user acknowledges it. It offers copy buttons for the key ID, the secret, and an environment-variable block (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_ENDPOINT_URL`). After "Done", the secret is dropped from the view model.
+- A scope of all buckets is sent as `["*"]`.
+
+**Tests (binding names).** Every admin-gui §16.2 test for `ui/buckets/vm`, `ui/keys/vm` and `ui/keys`.
+
+**Verify.**
+
+```bash
+cd apps/admin
+CGO_ENABLED=1 go vet -mod=readonly ./internal/ui/buckets/... ./internal/ui/keys/...
+CGO_ENABLED=1 go test -mod=readonly -race ./internal/ui/buckets/... ./internal/ui/keys/...
+gofmt -l internal/ui/buckets internal/ui/keys
+```
+
+**Commits.** `add bucket screens`, `add access key screens with one time secret dialog`.
 
 ### 5.4 Lane L4 — apps/admin/internal/ui/objects (browse, upload, download, delete, presign, preview)
 
-Implement apps/admin/internal/ui/objects (browse, upload, download, delete, presign, preview). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Module rules for every phase 10 lane.** Work inside `apps/admin`, which is the separate Go module `github.com/PRIEYAN/ButterDB/apps/admin`. It builds with `CGO_ENABLED=1`, and on Linux it needs the OpenGL and X11 headers listed in `docs/spec/admin-gui.md` §17.3. Follow the import rules table in admin-gui §2 (checked later by `TestImportRules`). Never import another screen package. View models are pure Go and never import `fyne.io/...`. Every view model follows the §3.4 shape: synchronous commands, state published through `model.Observable`. Views call commands with `go`. Show errors only through `model.Describe` (§12), never raw error text. Never log or persist tokens, secrets, api_hash, phone codes or passwords (§5.4, §15). Run tests with the Fyne test driver; no display is needed.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Objective.** Build the object browser: prefix navigation with breadcrumbs, paged listing, upload (file picker and drag-and-drop) with progress, download with MD5 verification, batch delete, presigned URL creation, and details with image preview.
 
-Commit this lane as `implement phase 10 apps admin internal ui objects browse upload ` after its package tests pass.
+**Owned paths.** `apps/admin/internal/ui/objects/` (including `vm/`).
+
+**Read.** `docs/spec/admin-gui.md` §10.1–§10.7, §12, §13.3 (threading), §16.2 (the `ui/objects*` rows); `docs/spec/admin-api.md` §12.1–§12.6 (object endpoints, idempotency and the `commit_outcome_unknown` code).
+
+**Contracts.** Declare `vm.Client` exactly as in admin-gui §3.3. Export `NewView(vm, nav, w fyne.Window) fyne.CanvasObject`; the window is needed for file dialogs and drops.
+
+**Rules.**
+- Folders are listed first. "Load more" appends the next page from the server cursor.
+- Before replacing an existing key, ask the user. Replacing sends `If-Match` with the current ETag; a new key sends `If-None-Match: *`.
+- Each upload uses one `Idempotency-Key` that stays the same across its retries. `commit_outcome_unknown` retries with the same key.
+- Check the size limit before sending; an oversized file is never sent. An upload in its committing stage cannot be cancelled.
+- Downloads write to `<name>.part`, verify MD5 against a non-multipart ETag, then rename. Keys are sanitised into safe local file names.
+- Deletes go in batches of 1000 and report partial failures per key.
+- The presign key list is filtered to keys holding `read` on the bucket. The image preview refuses sources above the §10.7 size ceiling.
+- Network calls never run on the UI goroutine (§13.3).
+
+**Tests (binding names).** Every admin-gui §16.2 test for `ui/objects/vm` and `ui/objects`.
+
+**Verify.**
+
+```bash
+cd apps/admin
+CGO_ENABLED=1 go vet -mod=readonly ./internal/ui/objects/...
+CGO_ENABLED=1 go test -mod=readonly -race ./internal/ui/objects/...
+gofmt -l internal/ui/objects
+```
+
+**Commits.** `add object browser view model`, `add object upload and download transfers`, `add object browser screens and preview`.
 
 ### 5.5 Lane L5 — apps/admin/internal/ui/{dashboard,settings}
 
-Implement apps/admin/internal/ui/{dashboard,settings}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Module rules for every phase 10 lane.** Work inside `apps/admin`, which is the separate Go module `github.com/PRIEYAN/ButterDB/apps/admin`. It builds with `CGO_ENABLED=1`, and on Linux it needs the OpenGL and X11 headers listed in `docs/spec/admin-gui.md` §17.3. Follow the import rules table in admin-gui §2 (checked later by `TestImportRules`). Never import another screen package. View models are pure Go and never import `fyne.io/...`. Every view model follows the §3.4 shape: synchronous commands, state published through `model.Observable`. Views call commands with `go`. Show errors only through `model.Describe` (§12), never raw error text. Never log or persist tokens, secrets, api_hash, phone codes or passwords (§5.4, §15). Run tests with the Fyne test driver; no display is needed.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Objective.** Build the dashboard (status and usage, polled while visible) and the settings screens: connection, this device, devices, Telegram account, activity (audit log), about, and app preferences.
 
-Commit this lane as `implement phase 10 apps admin internal ui dashboard settings` after its package tests pass.
+**Owned paths.** `apps/admin/internal/ui/dashboard/`, `apps/admin/internal/ui/settings/` (each including `vm/`).
+
+**Read.** `docs/spec/admin-gui.md` §7, §11.1–§11.7, §12, §16.2 (the `ui/dashboard/vm` and `ui/settings/vm` rows); `docs/spec/admin-api.md` §7.5, §8.8, §9, §14.
+
+**Contracts.** Declare `vm.Client` ports exactly as in admin-gui §3.3. Export `NewView(vm, nav) fyne.CanvasObject` from each screen package. The dashboard view model exposes `Start(ctx)` and `Stop()` for polling.
+
+**Rules.**
+- The dashboard merges `Status` and `Usage` into one state and stops polling when hidden.
+- Revoking the last remaining device asks for confirmation twice. Revoking this device routes to connect.
+- Unlinking Telegram requires typing the word `unlink`.
+- The audit filter is a prefix match on the action.
+
+**Tests (binding names).** Every admin-gui §16.2 test for `ui/dashboard/vm` and `ui/settings/vm`.
+
+**Verify.**
+
+```bash
+cd apps/admin
+CGO_ENABLED=1 go vet -mod=readonly ./internal/ui/dashboard/... ./internal/ui/settings/...
+CGO_ENABLED=1 go test -mod=readonly -race ./internal/ui/dashboard/... ./internal/ui/settings/...
+gofmt -l internal/ui/dashboard internal/ui/settings
+```
+
+**Commits.** `add dashboard screen`, `add settings screens`.
 
 ### 5.6 Lane L6 — apps/admin/packaging (fyne package, icons, build scripts for Windows, Linux, macOS)
 
-Implement apps/admin/packaging (fyne package, icons, build scripts for Windows, Linux, macOS). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Package the Fyne admin app for Windows, Linux and macOS: icon, metadata, a release build program, and per-OS build notes. Signing remains an owner gate.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `apps/admin/packaging/`. `FyneApp.toml` belongs to the prelude; if a metadata change is needed, report it rather than editing the file.
 
-Commit this lane as `implement phase 10 apps admin packaging fyne package icons build` after its package tests pass.
+**Read.** `docs/spec/admin-gui.md` §17.1–§17.4.
+
+**Deliverables.**
+- `apps/admin/packaging/icon.png`: 1024×1024. Generate it from a simple vector source committed alongside it as `icon.svg`.
+- `apps/admin/packaging/build.go` (behind `//go:build ignore`): a release program that runs `fyne package -os <os> -release`, or `fyne-cross <os> -arch amd64,arm64` for cross builds, with the version from `git describe`. It writes artifacts to `dist/`, never into the source tree.
+- `apps/admin/packaging/checksums_test.go`: `TestArtifactNames` checks the artifact naming function used by the release program.
+- Per-OS notes go in `docs/guide/admin-app-build.md`. That is the one file outside the owned paths this lane writes, because documents live in `docs/`; the phase 11 docs lane links to it.
+
+**Rules.**
+- Use pinned tool versions: `fyne.io/tools/cmd/fyne` and `github.com/fyne-io/fyne-cross` at the versions §17.2 names.
+- Never commit build outputs or signing material. Add `dist/` to the module's `.gitignore` if it is missing.
+
+**Tests (binding names).** `TestArtifactNames`.
+
+**Verify.**
+
+```bash
+cd apps/admin
+go vet -mod=readonly ./packaging/...
+go test -mod=readonly ./packaging/...
+go run ./packaging/build.go -os linux -dry-run
+```
+
+**Commits.** `add admin app icon and release build program`, `add admin app build guide`.
 
 ## 6. Integration lane
 

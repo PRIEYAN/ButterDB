@@ -38,7 +38,18 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/ops/{health,metrics}
 
-Implement internal/ops/{health,metrics}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Expose liveness, readiness and metrics: the server state machine behind `/healthz` and `/readyz`, the serving gate, and every Prometheus metric the specs name, on the loopback ops listener.
+
+**Owned paths.** `internal/ops/health/`, `internal/ops/metrics/`.
+
+**Read.** `docs/spec/operations.md` §7.2–§7.5 (states, endpoints, serving gate, the §7.5 Go contract), §15.1–§15.3 (exposition, every metric, alerts); `docs/spec/security.md` §16 (`TestMetricsTokenRequired`, `TestHostHeaderRebinding`).
+
+Implement the operations §7.5 contract exactly. `metrics` exposes a registry constructor plus typed recorders for each §15.2 metric family; packages record through narrow ports they declare. Add `github.com/prometheus/client_golang/prometheus` and `.../promhttp` by exact path in the prelude, or write the text exposition format by hand. Choose one and record it.
+
+**Rules.**
+- `/healthz` is liveness only. `/readyz` follows the §7.3 table. Readiness never depends on the media worker.
+- The ops listener defaults to loopback. It requires the metrics bearer token when configured and rejects foreign `Host` headers.
+- Metric names, types and labels match §15.2 exactly. Labels never carry keys, tokens or object names.
 
 Verify every command, configuration key, flag, and endpoint against
 `docs/spec/operations.md` and `docs/spec/s3-api.md`. Check all local links and
@@ -52,63 +63,277 @@ Verified source instructions for this lane:
 | `backend/media/throughput_meter.go` | 131 | PATTERN-ONLY | `internal/ops/metrics` (L1) | Sliding-window bytes per second in time buckets with an injectable clock, plus flood-wait notes |
 | `internal/app/backend_startup.go` | 69 | PATTERN-ONLY | `internal/ops/health` (L1) | Readiness reported only after startup finishes or fails |
 
-Commit this lane as `implement phase 11 internal ops health metrics` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/media/throughput_meter.go`: `type ThroughputStats struct {`; `func (m *throughputMeter) Add(n int) {`; `func (m *throughputMeter) NoteFloodWait(d time.Duration) {`; `func (m *throughputMeter) Stats() ThroughputStats {`
 - `internal/app/backend_startup.go`: `func (a *App) WaitForBackendReady(ctx context.Context) error {`
 
+**Tests (binding names).** `TestReadinessStates` (every §7.2 state), `TestHealthzAlwaysLive`, `TestServingGate`, `TestEveryMetricRegistered` (table over §15.2), `TestNoHighCardinalityLabels`, `TestMetricsTokenRequired`, `TestHostHeaderRebinding`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/ops/health/... ./internal/ops/metrics/...
+go test -mod=readonly -race ./internal/ops/health/... ./internal/ops/metrics/...
+gofmt -l internal/ops/health internal/ops/metrics
+```
+
+**Commits.** `add health and readiness endpoints`, `add prometheus metrics`.
+
 ### 5.2 Lane L2 — internal/ops/snapshot
 
-Implement internal/ops/snapshot. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Take, seal, prune, upload, verify and restore `bdsnap1` snapshots of `projection.db`, `control.db` and `state.json`.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/ops/snapshot/`, `internal/storage/opsrepo/` (the new snapshot-index repository over the `snapshots` and `ops_channels` tables, `docs/spec/schema.md` §5.10 and §6; it implements `Records`).
 
-Commit this lane as `implement phase 11 internal ops snapshot` after its package tests pass.
+**Read.** `docs/spec/operations.md` §3.3 (`ops_channels`), §9.1–§9.6, §10.2, §10.5; `docs/spec/security.md` §5.2 (`K_snapshot`) and §12.3 (archive allowlist); `docs/spec/schema.md` (`snapshots`, `ops_channels`).
+
+**Contracts.** Implement the operations §9.3 contract and add restore and verify:
+
+```go
+package snapshot
+
+type Vacuumer interface {
+	VacuumInto(ctx context.Context, database string, dstPath string) error
+}
+
+type Sealer interface {
+	Seal(dst io.Writer, src io.Reader, plaintextSize int64) error
+	Open(src io.ReaderAt, storedSize int64) (io.Reader, error)
+}
+
+type Uploader interface {
+	UploadSnapshot(ctx context.Context, name string, size int64, body io.ReadSeeker, caption string, randomID int64) (msgID int64, err error)
+	DeleteSnapshotMessages(ctx context.Context, msgIDs []int64) error
+	LatestSnapshot(ctx context.Context, fingerprint string, name string) (io.ReadCloser, int64, error)
+}
+
+type Dependencies struct {
+	Vacuum      Vacuumer
+	Seal        Sealer
+	Upload      Uploader
+	Records     Records
+	FS          fsx.FS
+	Clock       clock.Clock
+	Config      Config
+	Fingerprint string
+	ServerID    string
+}
+
+type Records interface {
+	Insert(ctx context.Context, r Record) error
+	List(ctx context.Context) ([]Record, error)
+	Delete(ctx context.Context, path string) error
+}
+
+type Result struct {
+	Path     string
+	Bytes    int64
+	SHA256   [32]byte
+	Uploaded bool
+}
+
+type Manifest struct {
+	Format            string
+	CreatedAt         time.Time
+	ServerID          string
+	BinaryVersion     string
+	Schema            map[string]int
+	KEKFingerprint    string
+	DeploymentID      string
+	RegistryChannelID int64
+	Members           []Member
+}
+
+type Member struct {
+	Name   string
+	Bytes  int64
+	SHA256 string
+}
+
+func New(deps Dependencies) (*Service, error)
+func (s *Service) Create(ctx context.Context) (Result, error)
+func (s *Service) Verify(ctx context.Context, path string) (Manifest, error)
+func (s *Service) Restore(ctx context.Context, src io.ReaderAt, size int64, dataDir string) (Manifest, error)
+func (s *Service) Prune(ctx context.Context) (int, error)
+```
+
+`Sealer` is satisfied by a phase 03 `crypto/stream` adapter keyed with `keyring.Ring.SnapshotKey()`. `Uploader` is satisfied by a `tgclient` adapter that the integration lane builds. Declare both here.
+
+**Rules.**
+- Member order is exactly `manifest.json`, `state.json`, `control.db`, `projection.db`. Every member is a regular file with mode `0600`. The archive is gzip level 1 over USTAR tar.
+- Assemble in `snapshot.dir/.tmp-<id>/` (mode `0700`), seal into the final file, rename, then remove the temp directory, including on failure.
+- The upload caption is `bdsnap1|<file>|<sha256>|<fingerprint>`, which is not TDX1. The random ID is `StableRandomID(<snapshot id>, "snap")`. Sealed files above 1900 MiB are never uploaded; increment `butterdb_snapshot_upload_failures_total{reason="too_large"}`.
+- Restore and verify enforce the §9.2 allowlist, member hashes, the fingerprint, sizes up to `2 × manifest total`, and `PRAGMA integrity_check` (through a port), and they refuse a newer schema. Write into `tmp/` and rename into `data_dir`, with `state.json` last.
+- No SQLite transaction is held while uploading.
+
+**Tests (binding names).** `TestCreateMemberOrder`, `TestManifestHashes`, `TestSealedWithSnapshotKey`, `TestTempDirRemovedOnFailure`, `TestPruneKeepsRetain`, `TestUploadCaptionAndRandomID`, `TestTooLargeNotUploaded`, `TestVerifyWrongKeyFails`, `TestRestoreRejectsExtraMember`, `TestRestoreRejectsSymlink`, `TestRestoreRejectsSizeMismatch`, `TestRestoreFingerprintMismatch`, `TestRestoreRefusesNewerSchema`, `TestRestoreWritesStateLast`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/ops/snapshot/...
+gofmt -l internal/ops/snapshot
+```
+
+**Commits.** `add encrypted snapshot creation and pruning`, `add snapshot verify restore and ops channel upload`.
 
 ### 5.3 Lane L3 — deploy/ (Dockerfile distroless, systemd unit, compose, Caddy example)
 
-Implement deploy/ (Dockerfile distroless, systemd unit, compose, Caddy example). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Ship the deployment artifacts for the server: the systemd unit, a distroless container image, a compose example and a Caddy reverse-proxy example. These are configuration files, not Go code.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `deploy/systemd/butterdbd.service`, `deploy/systemd/butterdbd.sysusers.conf`, `deploy/Dockerfile`, `deploy/compose.yaml`, `deploy/caddy/Caddyfile`, `deploy/prometheus/alerts.yml`, `deploy/config/butterdbd.toml.example`, `deploy/test.sh`. `deploy/transformd/` belongs to phase 13.
 
-Commit this lane as `implement phase 11 deploy dockerfile distroless systemd unit com` after its package tests pass.
+**Read.** `docs/spec/operations.md` §2.5–§2.6 (secret files, example config), §3.1–§3.2 (data directory), §6 (single instance), §8 (shutdown and drain), §11.1–§11.4 (targets and proxies); `docs/spec/security.md` (hardening and secrets). TDrive pattern only: `/home/prieyan/weeb/TDrive/.github/appimage-smoke.Dockerfile` (hermetic smoke test).
+
+**Rules.**
+- The systemd unit uses `Type=notify` only if the integration lane wires `sd_notify`; otherwise `Type=simple`. Check `cmd/butterdbd` and record the choice. The unit loads secret paths with `LoadCredential=` for the server key file. Apply the sandboxing in §11.1 (`DynamicUser` or a dedicated user, `ProtectSystem=strict`, `ReadWritePaths=` the data directory, `NoNewPrivileges=yes`, `PrivateTmp=yes`). `TimeoutStopSec` is above the drain budget of §8.
+- The Dockerfile is multi-stage: `golang` pinned by digest builds with `CGO_ENABLED=0 GOWORK=off go build -trimpath`, onto `gcr.io/distroless/static-debian12:nonroot` pinned by digest, with one volume for the data directory and no shell. Secrets arrive as Docker secrets mounted as files. Never use `ENV` for secrets.
+- `compose.yaml` runs exactly one replica with `restart: unless-stopped` and no scale setting, and notes the Recreate-only rule of §6.
+- `deploy/prometheus/alerts.yml` ships the suggested alerts of operations §15.3; validate with `promtool check rules` when available.
+- The Caddyfile terminates TLS for the S3 host, passes the admin listener through, sets the upload body limit and timeouts from §11.3–§11.4, and preserves `Host` (SigV4 needs it).
+- The example config contains no secret values, only `*_file` paths.
+
+**Tests.** `deploy/test.sh` must:
+1. Run `systemd-analyze verify deploy/systemd/butterdbd.service` when available, and skip with a message otherwise.
+2. Run `docker build -f deploy/Dockerfile .` and then `docker run --rm --network none <image> version` when Docker is available.
+3. Run `caddy validate --config deploy/caddy/Caddyfile` and `promtool check rules deploy/prometheus/alerts.yml` when available.
+4. Run `butterdbd check-config --config deploy/config/butterdbd.toml.example`, built from source.
+
+**Verify.**
+
+```bash
+bash -n deploy/test.sh
+bash deploy/test.sh
+```
+
+**Commits.** `add systemd unit and example configuration`, `add distroless container image and compose example`, `add caddy reverse proxy example`, `add prometheus alert rules`.
 
 ### 5.4 Lane L4 — test/s3compat
 
-Implement test/s3compat. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Build the S3 compatibility suite: aws-sdk-go-v2 against an in-process `butterdbd` backed by `faketg` in CI, and against a real deployment when the environment variables are set.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `test/s3compat/`.
 
-Commit this lane as `implement phase 11 test s3compat` after its package tests pass.
+**Read.** `docs/spec/s3-api.md` §16.2 (binding test list and environment variables), §16.6 (exit criteria), §17 (accepted deviations; do not test against them), §12.4 (SDK settings); `docs/phases/08-s3-api.md` §6 (how the integration lane starts the server in-process).
+
+**Contracts.**
+
+```go
+package s3compat
+
+type Target struct {
+	Endpoint     string
+	AccessKeyID  string
+	Secret       string
+	Bucket       string
+	PublicBucket string
+	Fake         *faketg.Fake
+	Close        func()
+}
+
+func NewTarget(t *testing.T) Target
+```
+
+`NewTarget` reads the `BUTTERDB_S3COMPAT_*` variables. If they are present, it targets the real deployment and reads the secret from the file the variable names. Otherwise it starts `butterdbd` in process through `internal/core` with `faketg` and a temporary data directory. Fault-injection tests (`TestCompleteKeepalive`, `TestCompleteErrorIn200`, `TestPutSlowDown`) call `t.Skip` when `Fake` is nil.
+
+**Rules.**
+- Run every test both path-style and virtual-hosted-style. Virtual-hosted uses a base domain resolved through a custom dialer, as §16.2 describes.
+- The aws-sdk-go-v2 packages are test-only dependencies, added by the prelude at exact package paths (`github.com/aws/aws-sdk-go-v2/service/s3`, `github.com/aws/aws-sdk-go-v2/feature/s3/manager`, `github.com/aws/aws-sdk-go-v2/aws/signer/v4`, `github.com/aws/aws-sdk-go-v2/credentials`).
+- Never print the secret. Each test creates its own key prefix and cleans up.
+
+**Tests (binding names).** Every test in the s3-api §16.2 table, from `TestPutGetHeadDelete` through `TestCORSPreflight`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race -count=1 ./test/s3compat/...
+gofmt -l test/s3compat
+```
+
+**Commits.** `add s3 compatibility suite harness`, `add s3 compatibility object and listing tests`, `add s3 compatibility multipart auth and fault tests`.
 
 ### 5.5 Lane L5 — test/load
 
-Implement test/load. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Build the load and soak harness that measures the numbers the specs mark "measure on the phase 11 load harness": throughput, latency percentiles, cache hit ratio, `projection.db` size per object, `VACUUM INTO` time and memory.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `test/load/`.
 
-Commit this lane as `implement phase 11 test load` after its package tests pass.
+**Read.** `docs/spec/operations.md` §9.5, §10.4, §13.2–§13.6 (capacity and sizing), §15.2 (metrics to scrape); `docs/decisions.md` D4.
+
+**Contracts.**
+
+```go
+package main
+
+type Profile struct {
+	Name        string
+	Duration    time.Duration
+	Writers     int
+	Readers     int
+	ObjectSizes []int64
+	HotSetRatio float64
+	Keys        int
+}
+
+type Report struct {
+	Profile         string
+	Puts, Gets      int
+	PutP50, PutP99  time.Duration
+	GetP50, GetP99  time.Duration
+	SlowDowns       int
+	CacheHitRatio   float64
+	ProjectionBytes int64
+	BytesPerObject  float64
+	RSSPeakBytes    int64
+}
+```
+
+`test/load/main.go` is a command (`go run ./test/load -profile small -target fake|<endpoint>`). It runs against an in-process faketg-backed server by default, or against a deployment named on the command line. It prints the `Report` as JSON and writes `test/load/results/<profile>-<timestamp>.json`, which is git-ignored.
+
+**Profiles.** `smoke` (30 s), `small` (D4 shape: 1 writer per 10 readers, 80% of reads on a 5% hot set, sizes drawn from 50 KiB, 500 KiB, 5 MiB and 50 MiB), `soak` (2 h at `small` rates), and `fill` (puts until `-keys` objects exist, then reports bytes per object and `VACUUM INTO` time).
+
+**Rules.**
+- Use aws-sdk-go-v2 with adaptive retry, counting `SlowDown` separately from errors.
+- With faketg, inject Telegram latency and flood waits from `-flood-rate`.
+- Read cache-hit and queue metrics from the ops listener's `/metrics`.
+
+**Tests.** `TestProfilesValid`, `TestPercentiles`, `TestReportJSONShape`, and `TestSmokeProfileAgainstFake` (runs `smoke` for 5 s, gated by `-short`).
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./test/load/...
+go test -mod=readonly -short ./test/load/...
+go run ./test/load -profile smoke -target fake -duration 10s
+```
+
+**Commits.** `add load and soak harness`, `add load profiles and json reports`.
 
 ### 5.6 Lane L6 — docs/guide/ (self-hosting guide, runbook, SDK configuration, Telegram account safety)
 
-Write `docs/guide/self-hosting.md`, `docs/guide/runbook.md`,
-`docs/guide/sdk-configuration.md`, and
-`docs/guide/telegram-account-safety.md`. The first guide walks through
-server setup, private data directory, reverse proxy, certificate and
-fingerprint, first admin pairing, and bucket/key creation. The runbook covers
-readiness failures, drain, snapshot verification, restore, rebuild from
-Telegram, and loss of the server key. The SDK guide gives a working
-`aws-sdk-go-v2` endpoint and path-style configuration, PUT/GET/list/delete
-examples, timeouts, `503 SlowDown` retries, multipart limits, and documented
-S3 deviations. The account-safety guide explains owner-supplied credentials,
-send-rate limits, flood waits, 2FA, account loss, and replica limits. Keep
-secrets, setup tokens, and real account identifiers out of examples.
+**Objective.** Write the operator-facing guides for people self-hosting butterDB.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `docs/guide/self-hosting.md`, `docs/guide/runbook.md`, `docs/guide/sdk-configuration.md`, `docs/guide/telegram-account-safety.md`. `docs/guide/admin-app-build.md` belongs to phase 10 L6; link to it, but do not edit it.
 
-Commit this lane as `write self hosting and operations guides` after review.
+**Read.** `docs/spec/operations.md` (all), `docs/spec/security.md` §5, §7 and §13, `docs/spec/s3-api.md` §12.3–§12.4 and §17, `docs/spec/admin-gui.md` §4, `docs/decisions.md` (risks section).
+
+**Content.**
+- **`self-hosting.md`:** server setup, data directory permissions, server key generation and an off-host backup step, reverse proxy, the admin certificate fingerprint, first claim from the GUI, Telegram link, and creating the first bucket and access key.
+- **`runbook.md`:** readiness failures by state, drain, snapshot verification, restore, rebuild from Telegram, disaster recovery on a new host, and loss of the server key.
+- **`sdk-configuration.md`:** a working aws-sdk-go-v2 client (endpoint, path-style, region, timeouts and adaptive retry), PUT/GET/list/delete examples, boto3 and AWS CLI settings, `503 SlowDown` handling, multipart limits, and the documented deviations.
+- **`telegram-account-safety.md`:** owner-supplied `api_id`, a dedicated aged account with 2FA, the send-rate limiter, flood waits, account-loss consequences, replica limits, and Telegram's own `api_id` guidance.
+
+Keep secrets, setup tokens and real account identifiers out of every example.
+
+**Checks.**
+- Every command and flag matches `cmd/butterdbd` (`butterdbd --help`). Every config key matches operations §2.4.
+- Every relative link resolves to an existing file.
+- The Go example in `sdk-configuration.md` compiles. Copy it into a scratch module outside the repository and run `go vet` on it.
+
+**Tests.** None in Go. The checks above are this lane's acceptance, and the reviewer runs them.
+
+**Commit.** `write self hosting and operations guides`.
 
 ## 6. Integration lane
 

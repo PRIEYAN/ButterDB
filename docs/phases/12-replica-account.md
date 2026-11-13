@@ -84,77 +84,362 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — internal/replica/account
 
-Implement internal/replica/account. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Link, hold and unlink the replica Telegram account, and create its mirror channels: one replica registry channel plus one replica channel per primary bucket. Mirror the bucket ops and wrapped DEKs so the replica describes itself.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/replica/account/`.
 
-Commit this lane as `implement phase 12 internal replica account` after its package tests pass.
+**Read.** `docs/spec/admin-api.md` §8.1 and §13 (replica login states, `credentials_source`, `replica_same_account`, unlink); `docs/spec/storage-model.md` rows for the replica account and registry; `docs/spec/schema.md` `replica_channels`; `docs/plan.md` §7.7 steps 1–2; `docs/spec/operations.md` §3.1 (`secrets/session_replica.json`, `secrets/telegram_app_replica.json`). Reuse phase 04 `internal/identity` as a **second instance**. Do not copy its code.
+
+**Contracts.**
+
+```go
+package account
+
+type Login interface {
+	Status(ctx context.Context) (identity.Snapshot, error)
+	Start(ctx context.Context, phone string) (identity.Snapshot, error)
+	SubmitCode(ctx context.Context, loginID, code string) (identity.Snapshot, error)
+	SubmitPassword(ctx context.Context, loginID, password string) (identity.Snapshot, error)
+	Cancel(ctx context.Context) (identity.Snapshot, error)
+	Unlink(ctx context.Context) (identity.Snapshot, error)
+}
+
+type ChannelCreator interface {
+	CreateChannel(ctx context.Context, title, about string) (channelID, accessHash int64, err error)
+	SendControl(ctx context.Context, channelID, accessHash int64, text string, randomID int64) (msgID int64, err error)
+}
+
+type Channels interface {
+	Upsert(ctx context.Context, c ChannelMapping) error
+	All(ctx context.Context) ([]ChannelMapping, error)
+	Clear(ctx context.Context) error
+}
+
+type ChannelMapping struct {
+	PrimaryChannelID  int64
+	Kind              string
+	ReplicaChannelID  int64
+	ReplicaAccessHash int64
+	State             string
+}
+
+type Dependencies struct {
+	Login         Login
+	Creator       ChannelCreator
+	Channels      Channels
+	Buckets       BucketSource
+	PrimaryUserID func(ctx context.Context) (int64, error)
+	Clock         clock.Clock
+}
+
+type BucketSource interface {
+	Registry(ctx context.Context) (channelID int64, ops []string, err error)
+	Buckets(ctx context.Context) ([]bucket.Info, error)
+}
+
+func New(deps Dependencies) (*Service, error)
+func (s *Service) Login() Login
+func (s *Service) EnsureChannels(ctx context.Context) error
+func (s *Service) Unlink(ctx context.Context) error
+func (s *Service) Linked(ctx context.Context) (bool, error)
+```
+
+**Rules.**
+- An authorization whose user ID equals the primary's is logged out immediately and answered with `replica_same_account`.
+- `api_id` 0 with an empty `api_hash` reuses the primary credentials. Otherwise, store separate credentials as `telegram_app_replica.json` through `secretfile`.
+- `EnsureChannels` is idempotent. It creates only channels missing from `replica_channels`, with stable random IDs per primary channel, so a crash between creation and the mapping row never yields two replica channels. Before creating, query the replica account's dialogs for a channel whose `t=reg` marker names the primary channel.
+- The replica uses its own `flow` limiters and its own `tgclient/conn` scope, never the primary's.
+- Unlink stops workers (through a callback from integration), logs out best-effort, deletes `session_replica.json` and clears the journal tables. It never deletes replica channels.
+
+**Tests (binding names).** `TestReplicaRejectsPrimaryAccount`, `TestReuseOfPrimaryCredentials`, `TestSeparateCredentialsStoredPrivately`, `TestEnsureChannelsIdempotent`, `TestEnsureChannelsRecoversAfterCrash`, `TestMirrorsEncfgAndBucketOps`, `TestUnlinkKeepsChannels`, `TestSeparateLimiters`. Use two `faketg` accounts.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/replica/account/...
+gofmt -l internal/replica/account
+```
+
+**Commits.** `add replica account login and unlink`, `add replica channel creation and bucket mirroring`.
 
 ### 5.2 Lane L2 — internal/replica/worker + internal/storage/replicarepo
 
-Implement internal/replica/worker + internal/storage/replicarepo. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Copy every primary commit to the replica account, in journal order, through the durable state machine in this document's "Replica journal contract and recovery" section. Implement the `replica.Repository` from the prelude over `control.db`.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/replica/worker/`, `internal/storage/replicarepo/`.
 
-Verified source instructions for this lane:
+**Read.** This document's §4 (prelude contract) and its "Replica journal contract and recovery" section (binding states and rules); `docs/plan.md` §7.7 steps 3–5 and 7; `docs/spec/schema.md` `replica_jobs`, `replica_objects`; `docs/spec/operations.md` §15.2 (`butterdb_replica_lag_ops`). TDrive reference: `/home/prieyan/weeb/TDrive/backend/tgclient/download.go`, for streaming a primary document. Here, read through `readpath` instead.
 
-| TDrive file | Lines | Verdict | Destination | Keep, change, and drop |
-|---|---:|---|---|---|
-| `backend/tgclient/download.go` | 173 | PORT-PARTIAL (phase 04) | `internal/replica/worker` (L2) consumes `tgclient/rangeio` | Copy a primary body by streaming it, then send it to the replica with the same job-derived `random_id` |
+**Contracts.** `replicarepo.Repo` implements `replica.Repository` exactly as in §4, plus:
 
-Commit this lane as `implement phase 12 internal replica worker internal storage repl` after its package tests pass.
+```go
+package replicarepo
+
+func New(db *sqlitedb.DB) *Repo
+func (r *Repo) Lag(ctx context.Context) (pending int64, oldest time.Time, err error)
+func (r *Repo) FirstFailing(ctx context.Context) (replica.Job, bool, error)
+```
+
+```go
+package worker
+
+type StoredReader interface {
+	OpenStored(ctx context.Context, channelID int64, putMsgID int64) (io.ReadSeekCloser, int64, [32]byte, error)
+}
+
+type ReplicaSender interface {
+	SendBody(ctx context.Context, replicaChannelID int64, name string, size int64, body io.ReadSeeker, caption string, randomID int64) (msgID int64, err error)
+	SendControl(ctx context.Context, replicaChannelID int64, text string, randomID int64) (msgID int64, err error)
+	FindByRandomID(ctx context.Context, replicaChannelID int64, randomID int64) (msgID int64, found bool, err error)
+	VerifyDocument(ctx context.Context, replicaChannelID int64, msgID int64, size int64, sha256 [32]byte) error
+}
+
+type Dependencies struct {
+	Repo    replica.Repository
+	Reader  StoredReader
+	Sender  ReplicaSender
+	Mapper  ChannelMapper
+	Clock   clock.Clock
+	Metrics Metrics
+}
+
+func New(deps Dependencies) (*Worker, error)
+func (w *Worker) Start(ctx context.Context) error
+func (w *Worker) Close(ctx context.Context) error
+```
+
+**Rules.**
+- Persist each state **before** the network step it guards. Retries reuse `replica_job_id` and `StableRandomID(replicaJobID, "body")` or `"put"`. Never mint a new random ID.
+- On `body_sending` or `op_attempted` after a restart, call `FindByRandomID` before resending.
+- Copy stored bytes unchanged: encrypted objects stay ciphertext, and the replica never sees plaintext. Verify the replica document's size and SHA-256 before sending the put op.
+- The move to `done` and the `replica_objects` upsert share one `control.db` transaction. A job superseded by a later primary op for the same key becomes `skipped`.
+- No SQLite transaction stays open across a send. Exponential backoff uses `next_attempt_at`, and the worker never blocks a primary acknowledgement.
+- Export `butterdb_replica_lag_ops` from `Lag`.
+
+**Tests (binding names).** `TestReplicaPutResumesAfterUnknownBodySend`, `TestReplicaPutResumesAfterUnknownControlSend`, `TestReplicaCopiesCiphertextUnchanged`, `TestReplicaVerifiesDocumentBeforePut`, `TestDoneAndMappingAtomic`, `TestSupersededJobSkipped`, `TestTransitionRejectsStaleState`, `TestPrimaryAcknowledgementDoesNotWaitForReplica`, `TestBackoffNextAttempt`; `replicarepo`: `TestEnqueueUniquePerPrimaryOp`, `TestNextOrderedBySeq`, `TestMappingForVersionExact`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/replica/worker/... ./internal/storage/replicarepo/...
+gofmt -l internal/replica/worker internal/storage/replicarepo
+```
+
+**Commits.** `add replica journal repository`, `add replica worker state machine`.
 
 ### 5.3 Lane L3 — internal/replica/backfill
 
-Implement internal/replica/backfill. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Close every gap between the primary projection and the replica journal: at link time (mirroring existing objects) and at every start (crashes between a primary commit and its journal row).
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/replica/backfill/`.
 
-Verified source instructions for this lane:
+**Read.** This document's "Replica journal contract and recovery" section (scan order, uniqueness, op kinds); `docs/plan.md` §7.7 step 3; `docs/spec/admin-api.md` §13 (`backfill` progress fields); `docs/spec/schema.md` `replica_jobs` uniqueness. TDrive pattern: `/home/prieyan/weeb/TDrive/backend/backfill/backfill.go` (checkpoint cursor, already-done gate, `OpsPerSec = 5` throttle, progress events).
 
-| TDrive file | Lines | Verdict | Destination | Keep, change, and drop |
-|---|---:|---|---|---|
-| `backend/backfill/backfill.go` | 368 | PATTERN-ONLY | `internal/replica/backfill` (L3) | Resumable checkpoint cursor (`backfill_progress`), `alreadyDone` / `markDone` gate, `loadAlreadyPublished` so a restart never republishes, throttle `OpsPerSec = 5` via a ticker, progress events |
+**Contracts.**
 
-Commit this lane as `implement phase 12 internal replica backfill` after its package tests pass.
+```go
+package backfill
 
-TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
+type ReplayCursor interface {
+	After(ctx context.Context, channelID int64, afterMsgID int64, limit int) ([]Op, error)
+	Channels(ctx context.Context) ([]int64, error)
+}
 
-- `backend/backfill/backfill.go`: `type Runner struct {`; `type PeerResolver interface {`; `type ProgressEvent struct {`; `func NewRunner(db *sql.DB, tg tgclient.Client, peers PeerResolver) *Runner {`; `func (r *Runner) RunPersonal(ctx context.Context, channelID int64, onProgress func(ProgressEvent)) error {`
+type Op struct {
+	ChannelID int64
+	MsgID     int64
+	Kind      string
+	ObjectKey string
+}
+
+type Progress struct {
+	ObjectsTotal int64
+	ObjectsDone  int64
+	BytesDone    int64
+	StartedAt    time.Time
+}
+
+type Dependencies struct {
+	Replay ReplayCursor
+	Repo   replica.Repository
+	Live   LiveObjects
+	Clock  clock.Clock
+	Rate   int
+}
+
+type LiveObjects interface {
+	IsLiveVersion(ctx context.Context, channelID int64, key string, putMsgID int64) (bool, error)
+	Count(ctx context.Context) (int64, error)
+}
+
+func New(deps Dependencies) (*Runner, error)
+func (r *Runner) Run(ctx context.Context, onProgress func(Progress)) error
+```
+
+**Rules.**
+- Scan `replay_log` in `(channel_id, msg_id)` order, in keyset batches of 256. Include `bcreate`, `bcfg`, `bdel` and `encfg` ops, not only `put` and `del`.
+- Enqueue relies on the `UNIQUE (primary_channel_id, primary_msg_id, kind)` constraint, so a re-run inserts nothing new (idempotent).
+- A `put` that is no longer the live version of its key is enqueued as `skipped`, never copied.
+- Throttle enqueue to `Rate` operations per second (default 5), honour cancellation, and report progress at most once per second.
+- No transaction is held across batches.
+
+**Tests (binding names).** `TestReplicaBackfillIsIdempotent`, `TestBackfillIncludesBucketAndKeyOps`, `TestBackfillSkipsSupersededVersions`, `TestBackfillResumesAfterCancel`, `TestBackfillRateLimited`, `TestBackfillProgressFields`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/replica/backfill/...
+gofmt -l internal/replica/backfill
+```
+
+**Commit.** `add replica backfill`.
 
 ### 5.4 Lane L4 — internal/readpath/replicasource (fallback read source)
 
-Implement internal/readpath/replicasource (fallback read source). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Serve an object's stored bytes from the replica account when the primary fails non-transiently, but only for the exact primary version the replica mirrors.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/readpath/replicasource/`.
 
-Verified source instructions for this lane:
+**Read.** This document's "Replica journal contract and recovery" section (version-exact fallback rule); `docs/plan.md` §7.2 step 12 and §7.7 step 8; `docs/phases/07-read-path.md` §5 (the `rangereader` read port this decorates); `docs/spec/storage-model.md` failure-modes table. TDrive pattern: `/home/prieyan/weeb/TDrive/backend/media/external.go` (`externalRangeClient`, a second range client behind the same port, with a periodic access check every 30 s).
 
-| TDrive file | Lines | Verdict | Destination | Keep, change, and drop |
-|---|---:|---|---|---|
-| `backend/media/external.go` (`externalRangeClient`) | (in 274) | PATTERN-ONLY | `internal/readpath/replicasource` (L4) | A second range client behind the same read port, checked periodically for access (`externalAccessCheckInterval = 30 * time.Second`) |
+**Contracts.**
 
-Commit this lane as `implement phase 12 internal readpath replicasource fallback read` after its package tests pass.
+```go
+package replicasource
 
-TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
+type Mappings interface {
+	MappingForVersion(ctx context.Context, channelID int64, key string, putMsgID int64) (replica.Mapping, bool, error)
+}
 
-- `backend/media/external.go`: `type ExternalMedia struct {`; `func ExternalName(message tgclient.HistoryMessage) string {`; `func ExternalKind(message tgclient.HistoryMessage) StreamKind {`; `func (s *Service) OpenExternal(ctx context.Context, source ExternalMedia, publish func(func() error) error) (OpenResult, error) {`; `func (c *externalRangeClient) ResolveDocument(ctx context.Context, _ tgclient.InputPeer, msgID int64) (tgclient.DocumentRef, error) {`; `func (c *externalRangeClient) ReadDocumentRange(ctx context.Context, ref tgclient.DocumentRef, offset int64, dst []byte) (int, error) {`; `func (s *Service) CloseExternalSessions(accountID, channelID int64) []string {`; `func (s *Service) CloseSourceSessions(accountID int64, kind string, peerID int64) []string {`
+type ReplicaRange interface {
+	ResolveDocument(ctx context.Context, channelID int64, msgID int64) (tgclient.DocumentRef, error)
+	ReadDocumentRange(ctx context.Context, ref tgclient.DocumentRef, offset int64, dst []byte) (int, error)
+}
+
+type Dependencies struct {
+	Primary  Source
+	Mappings Mappings
+	Replica  ReplicaRange
+	Clock    clock.Clock
+}
+
+func New(deps Dependencies) (*Fallback, error)
+```
+
+`Source` is the stored-bytes read port that phase 07 `objectreader` consumes. `*Fallback` implements the same interface, so the integration lane wraps the primary source without changing any phase 07 package. Copy the port's method set exactly from `docs/phases/07-read-path.md`. If that port is not exported for decoration, stop and report.
+
+**Rules.**
+- Fall back only on non-transient primary failures: channel or message gone, `CHANNEL_PRIVATE`, an account restriction, or the primary marked unavailable. Never fall back on flood waits, timeouts or context cancellation.
+- The replica must serve the identical primary put message ID. An older replica version must never satisfy a newer primary version: return the primary error instead.
+- Stored bytes are identical on both sides, so decryption and ETags upstream are unaffected.
+- Recheck replica access at most every 30 s. Fallback reads count in `butterdb_replica_fallback_reads_total`.
+
+**Tests (binding names).** `TestReplicaMappingIsVersionExact`, `TestFallbackOnChannelGone`, `TestNoFallbackOnFloodWait`, `TestNoFallbackOnCancel`, `TestFallbackBytesIdentical`, `TestAccessRecheckInterval`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/readpath/replicasource/...
+gofmt -l internal/readpath/replicasource
+```
+
+**Commit.** `add replica fallback read source`.
 
 ### 5.5 Lane L5 — internal/replica/deletes
 
-Implement internal/replica/deletes. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Mirror primary deletions on the replica: object tombstones, superseded-version cleanup, bucket deletion and purges, using the same tombstone-first, batch-of-100 rules as the primary.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/replica/deletes/`.
 
-Commit this lane as `implement phase 12 internal replica deletes` after its package tests pass.
+**Read.** This document's "Replica journal contract and recovery" section (L5 rule); `docs/spec/storage-model.md` hard-delete and overwrite sections (E3, E4); `docs/phases/06-write-path.md` §5.3 (the primary `remove` flow to mirror); `docs/spec/schema.md` `replica_jobs` kinds `del`, `purge`, `bdel`.
+
+**Contracts.**
+
+```go
+package deletes
+
+type ReplicaDeleter interface {
+	SendControl(ctx context.Context, replicaChannelID int64, text string, randomID int64) (msgID int64, err error)
+	DeleteMessages(ctx context.Context, replicaChannelID int64, msgIDs []int64) error
+	FindByRandomID(ctx context.Context, replicaChannelID int64, randomID int64) (msgID int64, found bool, err error)
+}
+
+type Dependencies struct {
+	Repo     replica.Repository
+	Deleter  ReplicaDeleter
+	Mappings Mappings
+	Clock    clock.Clock
+}
+
+type Mappings interface {
+	Current(ctx context.Context, channelID int64, key string) (replica.Mapping, bool, error)
+	Remove(ctx context.Context, channelID int64, key string) error
+}
+
+func New(deps Dependencies) (*Handler, error)
+func (h *Handler) Handle(ctx context.Context, job replica.Job) error
+```
+
+The L2 worker calls `Handle` for jobs of kind `del`, `purge` and `bdel`. Integration wires it through a small dispatch interface the worker declares.
+
+**Rules.**
+- Send the replica `t=del` tombstone first, with `StableRandomID(replicaJobID, "del")`, and only then delete the replica body and put messages in batches of at most 100.
+- A partial batch failure retries only the remaining IDs. Deleting an already-deleted message counts as success.
+- A put for a key that arrives after its delete in journal order keeps the newer mapping. A delete never removes a mapping whose primary put message ID is newer than the delete.
+- Never delete replica channels on `bdel`. Mark `replica_channels.state = 'deleted'`.
+
+**Tests (binding names).** `TestReplicaDeleteTombstonePreventsResurrection`, `TestTombstoneBeforeDelete`, `TestBatchesOfHundred`, `TestPartialBatchRetriesRemainder`, `TestDeleteKeepsNewerMapping`, `TestBucketDeleteKeepsChannel`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/replica/deletes/...
+gofmt -l internal/replica/deletes
+```
+
+**Commit.** `add replica delete mirroring`.
 
 ### 5.6 Lane L6 — internal/adminapi/handlers/replica.go + api/adminv1 replica DTO file + apps/admin/internal/ui/replica
 
-Implement internal/adminapi/handlers/replica.go + api/adminv1 replica DTO file + apps/admin/internal/ui/replica. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Expose the replica account in the admin API and the Fyne app: status, login, cancel and unlink.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/adminapi/handlers/replica.go`, `internal/adminapi/handlers/replica_test.go`, `apps/admin/internal/ui/replica/` (including `vm/`). If `api/adminv1` lacks any replica DTO named in `docs/spec/admin-api.md` §16.6, add exactly one new file, `api/adminv1/replica_extra.go`. Never edit the existing DTO files.
 
-Commit this lane as `implement phase 12 internal adminapi handlers replica go api adm` after its package tests pass.
+**Read.** `docs/spec/admin-api.md` §13, §16.6 (replica DTOs), §16.7 (replica client methods, already implemented in phase 09 L5); `docs/spec/admin-gui.md` §11.8 and §16.2 (`ui/replica/vm` row); `docs/phases/10-admin-gui.md` L2 (the reusable `telegramlink.LoginWizard`).
+
+**Server contract.** In `handlers`, add the routes from admin-api §13 (`GET /admin/v1/replica`, `POST /admin/v1/replica/telegram/phone`, `/code`, `/password`, `/cancel`, `/unlink`). They replace the phase 09 `501` placeholders and call a port declared in `replica.go`:
+
+```go
+type ReplicaService interface {
+	Status(ctx context.Context) (adminv1.ReplicaStatus, error)
+	Start(ctx context.Context, phone string, apiID int, apiHash string) (adminv1.ReplicaStatus, error)
+	SubmitCode(ctx context.Context, loginID, code string) (adminv1.ReplicaStatus, error)
+	SubmitPassword(ctx context.Context, loginID, password string) (adminv1.ReplicaStatus, error)
+	Cancel(ctx context.Context) (adminv1.ReplicaStatus, error)
+	Unlink(ctx context.Context) (adminv1.ReplicaStatus, error)
+}
+```
+
+If the phase 09 router registers routes centrally, add a `RegisterReplica(mux, ReplicaService)` function in `replica.go`, and let the integration lane call it instead of editing the router file.
+
+**GUI contract.** `replica/vm` declares the client port from admin-gui §3.3 and adapts it into a `LoginFlow` for the reused `telegramlink.LoginWizard`. `replica` exports `NewView(vm, nav) fyne.CanvasObject`. Show `state`, lag, backfill progress and `last_error` without credentials.
+
+**Rules.**
+- Responses never contain session bytes, api_hash, codes or passwords.
+- Unlink requires `{"confirm": "unlink"}`, and the GUI makes the user type `unlink`.
+- Every replica mutation writes an audit record.
+
+**Tests (binding names).** Server: `TestReplicaRoutesReplacePlaceholders`, `TestReplicaSameAccountMapped`, `TestReplicaUnlinkRequiresConfirm`, `TestReplicaStatusHasNoSecrets`. GUI: `TestNotImplementedPlaceholder`, `TestReplicaWizardReusesFlow`, `TestBackfillProgress`.
+
+**Verify.**
+
+```bash
+go test -mod=readonly -race ./internal/adminapi/handlers/...
+(cd apps/admin && CGO_ENABLED=1 go test -mod=readonly -race ./internal/ui/replica/...)
+gofmt -l internal/adminapi/handlers apps/admin/internal/ui/replica
+```
+
+**Commits.** `add replica admin api routes`, `add replica screen to admin app`.
 
 ## 6. Integration lane
 

@@ -38,36 +38,78 @@ Each worker receives only its lane brief, `docs/claude.md`, the relevant specifi
 
 ### 5.1 Lane L1 — apps/transformd (govips/libvips image ops, HEIC input, WebP/AVIF/JPEG/PNG output, metadata stripping with auto-orient, ffmpeg poster frames)
 
-Implement apps/transformd (govips/libvips image ops, HEIC input, WebP/AVIF/JPEG/PNG output, metadata stripping with auto-orient, ffmpeg poster frames). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Build the `butterdb-transformd` worker: a separate cgo binary that decodes images with libvips (HEIC input included), resizes, crops, pads and orients them, strips metadata, and encodes JPEG, PNG, WebP or AVIF. It extracts video posters through an ffmpeg subprocess, speaks `api/transformv1` over a Unix socket, and sandboxes itself.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** Everything under `apps/transformd/` except `go.mod` and `go.sum`, which the prelude owns: `main.go`, `internal/{server,sniff,pipeline,vipsguard,poster,sandbox}/`, `testdata/` (fixtures and `generate.sh`).
 
-Verified source instructions for this lane:
+**Read.** `docs/spec/media-api.md` §13 (stripping and orientation), §14 (protocol; the `api/transformv1` code is the prelude's), §16.1–§16.8, §17.1–§17.3, §18.1–§18.2, §22.1 (fixtures), §22.3 (binding worker tests). TDrive patterns: `/home/prieyan/weeb/TDrive/backend/media/image_admission.go` (admission limits checked before decode) and `/home/prieyan/weeb/TDrive/backend/thumbnail/orientation.go` (EXIF orientations 1–8; reuse its cases as auto-orient expectations).
 
-| TDrive file | Lines | Verdict | Destination | Keep, change, and drop |
-|---|---:|---|---|---|
-| `backend/media/image_admission.go` | 176 | PATTERN-ONLY | `apps/transformd` (L1) | Input admission before decode: `defaultMaxImageStreamBytes = 256 << 20`, `defaultMaxImageStreamPixels = 32_000_000`, `defaultMaxImageHeaderBytes = 4 << 20`, animated WebP probe (`imageAnimationProbeBytes = 32`) |
-| `backend/thumbnail/orientation.go` | 152 | PATTERN-ONLY | `apps/transformd` (L1) | EXIF orientation 1 to 8; its tests become auto-orient expectations for libvips output |
+**Contracts.** The worker's only exported surface is its command line (§16.3 flags: `--socket`, `--socket-mode`, `--tmp-dir`, `--ffmpeg`, `--concurrency`, `--memory-limit`, `--sandbox`) and the `transformv1` protocol. Internal packages expose what §16 describes. Import nothing from the root module except `github.com/PRIEYAN/ButterDB/api/transformv1`.
 
-Commit this lane as `implement phase 13 apps transformd govips libvips image ops heic` after its package tests pass.
+**Rules.**
+- Classify sources by magic number (`sniff`), never by extension or content type. The `vipsguard` cgo shim blocks every libvips loader outside the allowlist, so SVG, PDF, TIFF and magick loaders fail even when handed bytes directly.
+- Enforce the source pixel limit **before** a full decode, from the header. Bomb fixtures must finish in under 100 ms with under 32 MiB of RSS growth. Enforce the output byte limit too.
+- Auto-orient before stripping. Strip all metadata except the ICC profile. Output is deterministic: the same input and spec give identical bytes.
+- ffmpeg runs with the exact argument slice of §17.2. Use no shell and no user-controlled arguments, disable network protocols, give it a clean environment and a timeout, and kill its whole process group.
+- The socket has mode `0600` (or the `--socket-mode` value). Concurrency is gated, and the worker answers `busy` beyond the limit. A per-job budget watchdog exits the process when a job overruns.
+- The sandbox applies rlimits plus Landlock when available, and `--sandbox require` exits if Landlock is missing.
 
-TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
+**Tests (binding names).** Every media-api §22.3 test for `internal/sniff`, `internal/pipeline`, `internal/vipsguard`, `internal/poster`, `internal/sandbox` and `internal/server`, including `FuzzClassify`.
 
-- `backend/media/image_admission.go`: `type ImageAdmissionLimits struct {`; `func (reader *sessionImageHeaderReader) Read(dst []byte) (int, error) {`
+**Verify.** This needs libvips ≥ 8.15 headers (`pkg-config vips`) and ffmpeg on the host.
+
+```bash
+CGO_ENABLED=1 go -C apps/transformd vet -mod=readonly ./...
+CGO_ENABLED=1 go -C apps/transformd test -mod=readonly -race ./...
+CGO_ENABLED=1 go -C apps/transformd test -mod=readonly -run '^$' -fuzz FuzzClassify -fuzztime 60s ./internal/sniff
+gofmt -l apps/transformd
+```
+
+**Commits.** `add transform worker server and framing`, `add source sniffing and libvips loader guard`, `add image transform pipeline with orientation and stripping`, `add ffmpeg poster extraction`, `add worker sandbox and test fixtures`.
 
 ### 5.2 Lane L2 — internal/mediaapi/{grammar,presets,signing}
 
-Implement internal/mediaapi/{grammar,presets,signing}. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Implement the media URL language: parsing and canonicalising transformation strings, named presets per bucket, the width ladder, and HMAC-signed transformations with expiry.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/mediaapi/grammar/`, `internal/mediaapi/presets/`, `internal/mediaapi/signing/`.
 
-Commit this lane as `implement phase 13 internal mediaapi grammar presets signing` after its package tests pass.
+**Read.** `docs/spec/media-api.md` §2.2 (per-bucket settings and presets), §3–§9 (grammar, parameters, presets, canonicalisation, signing, width ladder, limits), §19.1–§19.3 (binding contracts), §22.2 (binding test rows for `grammar`, `presets` and `signing`).
+
+**Contracts.** Implement §19.1, §19.2 and §19.3 exactly. `grammar` imports only the standard library and `internal/domain`. `presets` and `signing` import nothing from `internal/mediaapi/handlers`, `derivcache` or `workerclient`.
+
+**Rules.**
+- `Parse(Canonical(x))` equals `x` for every valid input. Canonical form is stable and is the only input to cache keys and signatures.
+- Reject leading zeros, duplicate keys, unknown keys, empty segments, more than 16 parameters, and strings over 512 bytes.
+- Snap widths to the ladder and quality to its steps, and clamp DPR as §4 and §8 specify.
+- Signatures use HMAC over the exact §7.2 input, and verification compares in constant time. Accept the previous key during rotation, then zero old keys after rotation. The key file is 43 characters of base64url.
+- The §7.3 matrix decides when a signature is required: private buckets always, and arbitrary parameters unless the bucket allows unsigned use. Private URLs need `exp_` within the configured maximum.
+
+**Tests (binding names).** Every media-api §22.2 row for `grammar` (including `FuzzParse`), `presets` and `signing`.
+
+**Verify.**
+
+```bash
+GOWORK=off CGO_ENABLED=0 go test -mod=readonly -race ./internal/mediaapi/grammar/... ./internal/mediaapi/presets/... ./internal/mediaapi/signing/...
+GOWORK=off go test -mod=readonly -run '^$' -fuzz FuzzParse -fuzztime 60s ./internal/mediaapi/grammar
+gofmt -l internal/mediaapi/grammar internal/mediaapi/presets internal/mediaapi/signing
+```
+
+**Commits.** `add media transformation grammar and canonical form`, `add media presets`, `add media url signing`.
 
 ### 5.3 Lane L3 — internal/mediaapi/derivcache
 
-Implement internal/mediaapi/derivcache. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Build the derivative cache for transform output: disk and memory tiers keyed by bucket, key, object version and canonical transform, with eviction, stale-version reclamation, single flight and a negative cache.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/mediaapi/derivcache/`.
+
+**Read.** `docs/spec/media-api.md` §11.1–§11.8, §19.4 (binding contract), §22.2 `derivcache` row; `docs/spec/security.md` §16 (`TestDerivativesOfEncryptedMemoryOnly`).
+
+Implement media-api §19.4 exactly (`Key`, `Entry`, `Config`, `VersionLookup`, `Stats`, `Open`, `Get`, `Put`, `PurgeObject`, `Sweep`, `Stats`, `Close`).
+
+**Rules.**
+- The cache key includes the object version (put message ID) and the pipeline version, so an overwrite or a worker upgrade never serves stale output.
+- Derivatives of encrypted objects stay in the memory tier and never touch disk.
+- Writes are temp-and-rename, a torn file is a miss, `Open` clears stale temp files, and touch updates are throttled.
 
 Verified source instructions for this lane:
 
@@ -76,47 +118,110 @@ Verified source instructions for this lane:
 | `backend/mountcache/coalescer.go` | 362 | PORT | `internal/mediaapi/derivcache` (L3) | One transform per derivative key at a time; abandoned loads never cache late results. A second copy of the phase 07 port, trimmed to what derivcache uses, because the binding layout has no shared package for it. Default (owner may change) |
 | `backend/thumbnail/cache.go` | 535 | PATTERN-ONLY | `internal/mediaapi/derivcache` (L3) | Same disk-LRU design as `blockcache`, keyed by put message ID (the object version) and the normalized transform |
 
-Commit this lane as `implement phase 13 internal mediaapi derivcache` after its package tests pass.
-
 TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
 
 - `backend/mountcache/coalescer.go`: `func NewCoalescer[K comparable, V any](maxConcurrent int) *Coalescer[K, V] {`; `func (loads *Coalescer[K, V]) Load(`; `func (loads *Coalescer[K, V]) Invalidate(`; `func (loads *Coalescer[K, V]) InvalidateAll(terminalErr error, evict func()) {`; `func (loads *Coalescer[K, V]) Close(terminalErr error) {`; `func (loads *Coalescer[K, V]) Waiters(key K) int {`; `func (loads *Coalescer[K, V]) Len() int {`
 - `backend/thumbnail/cache.go`: `type Cache struct {`; `func NewCache(dir string, maxBytes int64) *Cache {`; `func (c *Cache) Get(key string) ([]byte, bool) {`; `func (c *Cache) GetLimited(key string, limit int64) ([]byte, bool) {`; `func (c *Cache) Has(key string) bool {`; `func (c *Cache) Put(key string, data []byte) error {`; `func (c *Cache) Usage() (used, maxBytes int64, entries int) {`; `func (c *Cache) Clear() error {`
 
+**Tests (binding names).** every media-api §22.2 `derivcache` test, plus `TestDerivativesOfEncryptedMemoryOnly`.
+
+**Verify.**
+
+```bash
+go vet -mod=readonly ./internal/mediaapi/derivcache/...
+go test -mod=readonly -race ./internal/mediaapi/derivcache/...
+gofmt -l internal/mediaapi/derivcache
+```
+
+**Commits.** `add derivative cache tiers and eviction`, `add derivative cache sweep and purge`.
+
 ### 5.4 Lane L4 — internal/mediaapi/workerclient (process supervision, unix socket)
 
-Implement internal/mediaapi/workerclient (process supervision, unix socket). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Run and talk to the transform worker: spawn it (or connect to an external one), health-check it, queue jobs within the concurrency limit, restart it with backoff, quarantine poison sources, and fail fast while it is down. A worker crash must never affect the S3 API.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/mediaapi/workerclient/`.
 
-Verified source instructions for this lane:
+**Read.** `docs/spec/media-api.md` §14 (protocol), §15.1–§15.6 (modes, spawn contract, backoff, queueing, crash isolation; §15.6 is the binding contract), §20.1 (worker metrics), §22.2 `workerclient` row. TDrive patterns: `/home/prieyan/weeb/TDrive/backend/daemon/socket_unix.go` (socket `0600`, parent directory `0700` after `Lstat`, stale socket removal) and `/home/prieyan/weeb/TDrive/backend/daemon/server_connection.go` (bounded frames, cancel on connection close).
 
-| TDrive file | Lines | Verdict | Destination | Keep, change, and drop |
-|---|---:|---|---|---|
-| `backend/daemon/socket_unix.go` | 79 | PATTERN-ONLY | `internal/mediaapi/workerclient` (L4) | Unix socket `0o600`, parent directory forced to `0o700` after `Lstat`, stale socket removed before listen and on close |
-| `backend/daemon/server_connection.go` | 106 | PATTERN-ONLY | `internal/mediaapi/workerclient` (L4) | `readLimitedLine`: bounded request frames; cancel the request when the connection closes |
+**Contract.** Implement §15.6 exactly (`Mode`, `ModeSpawn`, `ModeExternal`, `Config`, the client type and its methods). The `Transformer` port in `handlers` (§19.5) must be satisfied implicitly. Do not import `handlers`.
 
-Commit this lane as `implement phase 13 internal mediaapi workerclient process superv` after its package tests pass.
+**Rules.**
+- In spawn mode, the binary runs with the exact §15.2 arguments and a clean environment, in its own process group. In external mode it never spawns (`TestExternalModeNeverSpawns`).
+- Verify peer credentials on the socket: a UID mismatch is refused.
+- Restart backoff follows the §15.3 sequence and resets after healthy uptime. A crash retries the job once, and two crashes on the same source quarantine it (§15.5).
+- The queue is bounded, with a wait timeout. While the worker is down, return `media.worker_unavailable` immediately instead of queueing.
+- The watchdog kills the whole process group of a hung worker.
+- Use only injected time (a fake clock in tests). No goroutine outlives `Close`.
 
-TDrive exported declarations to compare while defining the butterDB adapter (the destination signatures must follow the butterDB spec):
+**Tests (binding names).** Every media-api §22.2 `workerclient` test, using the `TestMain` helper-process fake worker: `TestSpawnArgsAndEnv`, `TestHealthHandshake`, `TestRestartBackoffSequence`, `TestBackoffResetsAfterHealthyUptime`, `TestCrashRetriesOnce`, `TestQuarantineAfterTwoCrashes`, `TestQueueDepthAndTimeout`, `TestWatchdogKillsGroup`, `TestExternalModeNeverSpawns`, `TestPeerCredMismatch`, `TestFailFastWhileDown`.
 
-- `backend/daemon/socket_unix.go`: `func SocketPath() (string, error) {`
+**Verify.**
+
+```bash
+GOWORK=off CGO_ENABLED=0 go test -mod=readonly -race ./internal/mediaapi/workerclient/...
+gofmt -l internal/mediaapi/workerclient
+```
+
+**Commits.** `add transform worker supervision and restart backoff`, `add worker job queue and poison quarantine`.
 
 ### 5.5 Lane L5 — internal/mediaapi/handlers
 
-Implement internal/mediaapi/handlers. Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Serve `GET` and `HEAD` media requests: split the path, authorise (signature, expiry, bucket media settings) **before any work**, look up the source object, consult the derivative cache, call the worker under single flight, and answer with the §12 headers, conditional and range handling, and error codes.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `internal/mediaapi/handlers/`.
 
-Commit this lane as `implement phase 13 internal mediaapi handlers` after its package tests pass.
+**Read.** `docs/spec/media-api.md` §3.2 (path splitting), §10 (request processing order), §11.6–§11.7 (single flight, negative cache), §12.1–§12.4 (headers, Cache-Control, error body and table), §19.5 (binding contract and ports), §22.2 `handlers` row; `docs/phases/07-read-path.md` (`httprange` helpers to reuse for `Range` and conditionals).
+
+**Contract.** Implement §19.5 exactly: `BucketInfo`, `SourceInfo`, the ports `Buckets`, `Objects`, `Transformer`, `Cache`, `Presets`, `Authorizer`, plus `Config`, `Dependencies` and `New(deps Dependencies, cfg Config) (http.Handler, error)`. Declare every port here. Never import the L2, L3 or L4 packages; their types satisfy the ports implicitly.
+
+**Rules.**
+- Do not use `http.ServeMux` path cleaning. Split the raw path exactly as §3.2 says, honouring `//` and percent-encoding in keys.
+- Verify the signature and expiry before any `Stat`, cache or worker call. A `403` must leave every fake untouched (`TestVerifyBeforeWork`).
+- Without a signature, only presets are allowed on public buckets. Private buckets require `exp_`.
+- Sniff the source early and return `415` for unsupported sources. A source above the size limit is refused before reading.
+- Single flight: 50 concurrent identical requests make one worker call, and the flight survives one client cancelling.
+- Encrypted sources use the memory cache tier only; nothing is written to disk.
+- Cache-Control follows the §12.2 matrix, with `Vary: Accept` whenever `f_auto` applies. Never mark a response immutable, because keys are overwritable (A8).
+- Transforms never write to Telegram or the databases. Originals stay byte-for-byte (A4).
+
+**Tests (binding names).** Every media-api §22.2 `handlers` test, from `TestPathSplitting` through `TestEncryptedUsesMemoryTier`.
+
+**Verify.**
+
+```bash
+GOWORK=off CGO_ENABLED=0 go test -mod=readonly -race ./internal/mediaapi/handlers/...
+gofmt -l internal/mediaapi/handlers
+```
+
+**Commits.** `add media request handler with authorise first processing`, `add media response headers conditionals and single flight`.
 
 ### 5.6 Lane L6 — deploy/transformd/ (image with libvips, libheif, libde265, ffmpeg; systemd unit)
 
-Implement deploy/transformd/ (image with libvips, libheif, libde265, ffmpeg; systemd unit). Follow the exact protocol, schema, and limits in section 3. For a TDrive port, retain tested behavior, adapt it to bucket and key objects, remove unused desktop or folder behavior, and record attribution in `docs/legal/THIRD_PARTY_NOTICES.md`. Keep dependencies behind consumer-declared interfaces; construct adapters only in `internal/core`.
+**Objective.** Ship the transform worker's deployment artifacts: a container image with libvips, libheif and ffmpeg, a hardened systemd unit for external mode, and the compose service.
 
-Write table tests for valid, invalid, boundary, retry, and restart cases that apply to this package. Run `go test -mod=readonly` and `go build -mod=readonly` on owned packages. Commit only owned paths with a one-line lowercase message; report exported contracts and test evidence to the orchestrator.
+**Owned paths.** `deploy/transformd/Dockerfile`, `deploy/transformd/butterdb-transformd.service`, `deploy/transformd/compose.transformd.yaml`, `deploy/transformd/test.sh`. `deploy/compose.yaml` belongs to phase 11. Do not edit it; the integration lane adds the `include` of the transformd compose file.
 
-Commit this lane as `implement phase 13 deploy transformd image with libvips libheif ` after its package tests pass.
+**Read.** `docs/spec/media-api.md` §21.1–§21.3, §18.2 (sandbox), §15.1 (external mode).
+
+**Rules.**
+- The image has a `golang:1.26-trixie` build stage with `libvips-dev` and `pkg-config`, and builds with `CGO_ENABLED=1 go -C apps/transformd build -trimpath`. The runtime stage is `debian:trixie-slim` with the §21.1 package list. Pin package versions after checking `apt-cache policy` in the build stage, and pin base images by digest.
+- The container runs as uid `10002` and gid `10001`, with a read-only root filesystem, a tmpfs at `/tmp/transformd`, and `network_mode: none`.
+- The systemd unit uses exactly the §21.2 directives, including `PrivateNetwork=yes`, `RestrictAddressFamilies=AF_UNIX`, `InaccessiblePaths=/var/lib/butterdb /etc/butterdb`, and `MemoryMax=1G`.
+- Note the HEVC patent responsibility in a single-line comment in the Dockerfile. The guide carries the details.
+
+**Tests.** `deploy/transformd/test.sh` must:
+1. Run `systemd-analyze verify` on the unit when available.
+2. Run `docker build -f deploy/transformd/Dockerfile .` when Docker is available.
+3. Run the image with `--network none` against a socket in a temporary volume, perform the `transformv1` health exchange, and transform one JPEG fixture.
+
+**Verify.**
+
+```bash
+bash -n deploy/transformd/test.sh
+bash deploy/transformd/test.sh
+```
+
+**Commits.** `add transform worker container image`, `add transform worker systemd unit and compose service`.
 
 ## 6. Integration lane
 
