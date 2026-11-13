@@ -26,7 +26,7 @@ func Parse(raw string) (Op, error) {
 		return Op{}, err
 	}
 	rawType, ok := pairs["t"]
-	if !ok {
+	if !ok || rawType == "" {
 		return Op{}, ErrWireMalformed
 	}
 	opType := OpType(rawType)

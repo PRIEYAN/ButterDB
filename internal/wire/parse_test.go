@@ -117,6 +117,8 @@ func TestParseRejectsMalformed(t *testing.T) {
 		{"legacy mkdir op", "TDX1|t=mkdir|obj=d:7d3f|p=|n=x", ErrWireUnknownOp, "mkdir"},
 		{"plain text", "hello", ErrWireMalformed, ""},
 		{"plain text with pair", "hello|t=put", ErrWireBadVersion, ""},
+		{"empty type", "TDX1|t=|j=4f9c2d1e-8b3a-4c7d-9e2f-1a6b5c4d3e2f", ErrWireMalformed, ""},
+		{"empty type alone", "TDX1|t=", ErrWireMalformed, ""},
 		{"missing type", "TDX1|j=4f9c2d1e-8b3a-4c7d-9e2f-1a6b5c4d3e2f", ErrWireMalformed, ""},
 		{"header over the text limit", "TDX1|t=put|k=" + strings.Repeat("a", MaxTextChars), ErrWireTooLong, ""},
 	}

@@ -13,6 +13,7 @@ func TestEveryMalformedCase(t *testing.T) {
 		name   string
 		header string
 	}{
+		{"empty op type", "TDX1|t=|j=" + validJob},
 		{"body missing size", headerWithout(bodyHeader, "sz")},
 		{"body zero size", headerWith(bodyHeader, "sz", "0")},
 		{"body size above stored maximum", headerWith(bodyHeader, "sz", "1992294401")},

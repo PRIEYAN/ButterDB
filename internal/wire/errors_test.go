@@ -33,6 +33,7 @@ func TestEveryParseFailureReturnsASentinel(t *testing.T) {
 		"TDX1|":                                 ErrWireMalformed,
 		"TDX1|x":                                ErrWireMalformed,
 		"TDX1|t":                                ErrWireMalformed,
+		"TDX1|t=":                               ErrWireMalformed,
 		"TDX1|j=1":                              ErrWireMalformed,
 		"TDX2|t=put":                            ErrWireBadVersion,
 		"tdx1|t=put":                            ErrWireBadVersion,
