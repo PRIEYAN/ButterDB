@@ -1,0 +1,27 @@
+package logging
+
+const (
+	KeyComponent   = "component"
+	KeyRequestID   = "request_id"
+	KeyListener    = "listener"
+	KeyMethod      = "method"
+	KeyOperation   = "operation"
+	KeyStatus      = "status"
+	KeyErrorCode   = "error_code"
+	KeyBucket      = "bucket"
+	KeyObjectKey   = "key"
+	KeyBytesIn     = "bytes_in"
+	KeyBytesOut    = "bytes_out"
+	KeyDurationMS  = "duration_ms"
+	KeyRemoteAddr  = "remote_addr"
+	KeyAccessKeyID = "access_key_id"
+	KeyDeviceID    = "device_id"
+	KeyJobID       = "job_id"
+	KeyChannelID   = "channel_id"
+	KeyMessageID   = "msg_id"
+	KeyAccount     = "account"
+	KeyTGMethod    = "tg_method"
+	KeyFloodWaitS  = "flood_wait_s"
+	KeyDC          = "dc"
+	KeyErr         = "err"
+)
