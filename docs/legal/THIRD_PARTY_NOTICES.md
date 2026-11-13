@@ -80,12 +80,12 @@ that lands in two destinations has one row per destination.
 
 | TDrive source | butterDB destination | Kind | Phase | Status |
 | --- | --- | --- | --- | --- |
-| `backend/datadir/datadir.go` | `internal/platform/datadir` | ported | 01 | planned |
-| `backend/processlock/lock.go` | `internal/platform/processlock` | ported | 01 | planned |
-| `backend/processlock/lock_unix.go` | `internal/platform/processlock` | ported | 01 | planned |
-| `backend/processlock/process_unix.go` | `internal/platform/processlock` | ported | 01 | planned |
-| `backend/auth/private_file.go` | `internal/platform/secretfile` | ported | 01 | planned |
-| `backend/services/file/limits.go` | `internal/domain/limits` | ported | 01 | planned |
+| `backend/datadir/datadir.go` | `internal/platform/datadir` | ported | 01 | ported 0afdef4 |
+| `backend/processlock/lock.go` | `internal/platform/processlock` | ported | 01 | ported bea07c5 |
+| `backend/processlock/lock_unix.go` | `internal/platform/processlock` | ported | 01 | ported bea07c5 |
+| `backend/processlock/process_unix.go` | `internal/platform/processlock` | ported | 01 | ported bea07c5 |
+| `backend/auth/private_file.go` | `internal/platform/secretfile` | ported | 01 | ported 5e14d5f |
+| `backend/services/file/limits.go` | `internal/domain/limits` | ported | 01 | referenced b301829 |
 | `backend/projection/wire.go` | `internal/wire` | ported | 02 | planned |
 | `backend/projection/types.go` | `internal/wire` | ported | 02 | planned |
 | `backend/crypto/stream.go` (constants, size arithmetic, nonce and header layout) | `internal/crypto/format` | ported | 02 | planned |
@@ -154,9 +154,9 @@ that lands in two destinations has one row per destination.
 | --- | --- | --- | --- | --- |
 | `backend/applog/applog.go` | `internal/platform/logging` | design reference | 01 | planned |
 | `internal/app/operation.go` | `internal/domain/errs` | design reference | 01 | planned |
-| `backend/daemon/server.go` | `internal/lifecycle`, `internal/core` | design reference | 01 | planned |
-| `cmd/tdrived/main.go` | `cmd/butterdbd` | design reference | 01 | planned |
-| `cmd/tdrive/output.go` | `cmd/butterdbd` | design reference | 01 | planned |
+| `backend/daemon/server.go` | `internal/lifecycle`, `internal/core` | design reference | 01 | referenced bc16165 |
+| `cmd/tdrived/main.go` | `cmd/butterdbd` | design reference | 01 | referenced 21a40db |
+| `cmd/tdrive/output.go` | `cmd/butterdbd` | design reference | 01 | referenced 21a40db |
 | `backend/storage_sqlite.go` | `internal/storage/sqlitedb` | design reference | 02 | planned |
 | `backend/projection/apply.go` | `internal/projection/apply` | design reference | 03 | planned |
 | `backend/projection/writable_apply.go` | `internal/projection/apply` | design reference | 03 | planned |
