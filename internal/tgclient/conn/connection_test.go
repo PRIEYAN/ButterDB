@@ -107,11 +107,11 @@ func TestInvokeAfterCloseFails(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 	err := c.Invoke(context.Background(), func(context.Context, *tg.Client) error { return nil })
-	if !errors.Is(err, errScopeClosed) {
-		t.Fatalf("Invoke after Close = %v, want errScopeClosed", err)
+	if !errors.Is(err, ErrScopeClosed) {
+		t.Fatalf("Invoke after Close = %v, want ErrScopeClosed", err)
 	}
-	if err := c.Start(context.Background()); !errors.Is(err, errScopeClosed) {
-		t.Fatalf("Start after Close = %v, want errScopeClosed", err)
+	if err := c.Start(context.Background()); !errors.Is(err, ErrScopeClosed) {
+		t.Fatalf("Start after Close = %v, want ErrScopeClosed", err)
 	}
 	if err := c.Close(context.Background()); err != nil {
 		t.Fatalf("second Close: %v", err)
@@ -162,5 +162,39 @@ func TestTwoAccountsFailuresDoNotLeak(t *testing.T) {
 	}
 	if err := good.Invoke(context.Background(), noop); err != nil {
 		t.Fatalf("healthy account affected by the other: %v", err)
+	}
+}
+
+func TestInvokeBlockedInConnectReturnsScopeClosedOnClose(t *testing.T) {
+	release := make(chan struct{})
+	c := newWithFactory(testDependencies(), func() (gotdClient, error) {
+		<-release
+		return newFakeClient(nil), nil
+	})
+	result := make(chan error, 1)
+	go func() {
+		result <- c.Invoke(context.Background(), func(context.Context, *tg.Client) error { return nil })
+	}()
+	waitFor(t, func() bool { c.live.mu.Lock(); defer c.live.mu.Unlock(); return c.live.scope != nil })
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close(context.Background()) }()
+	waitFor(t, c.live.isClosed)
+	close(release)
+	if err := <-result; !errors.Is(err, ErrScopeClosed) {
+		t.Fatalf("Invoke err = %v, want ErrScopeClosed", err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestInvokeMediaAfterCloseReturnsScopeClosed(t *testing.T) {
+	c, _ := newTestConnection(t, newFakeClient(nil))
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	err := c.InvokeMedia(context.Background(), 4, func(context.Context, *tg.Client) error { return nil })
+	if !errors.Is(err, ErrScopeClosed) {
+		t.Fatalf("InvokeMedia after Close = %v, want ErrScopeClosed", err)
 	}
 }

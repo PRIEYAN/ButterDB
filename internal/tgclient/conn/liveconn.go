@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-var errScopeClosed = errors.New("conn: connection scope closed")
+var ErrScopeClosed = errors.New("conn: connection scope closed")
 
 type liveConn struct {
 	scopeFn func(ctx context.Context, ready func()) error
@@ -36,7 +36,7 @@ func (l *liveConn) acquire(ctx context.Context) error {
 		l.mu.Lock()
 		if l.closed {
 			l.mu.Unlock()
-			return errScopeClosed
+			return ErrScopeClosed
 		}
 		if l.scope == nil || l.scope.done {
 			l.start()
@@ -84,14 +84,17 @@ func (l *liveConn) afterDone(scope *connScope) (retry bool, err error) {
 		l.mu.Unlock()
 		return true, nil
 	}
-	wasReady, scopeErr := scope.ready, scope.err
+	wasReady, scopeErr, closed := scope.ready, scope.err, l.closed
 	l.scope = nil
 	l.mu.Unlock()
+	if closed {
+		return false, ErrScopeClosed
+	}
 	if wasReady {
 		return true, nil
 	}
 	if scopeErr == nil {
-		scopeErr = errScopeClosed
+		scopeErr = ErrScopeClosed
 	}
 	return false, scopeErr
 }

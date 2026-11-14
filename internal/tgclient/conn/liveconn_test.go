@@ -107,8 +107,8 @@ func TestLiveConnCloseStopsScope(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("scope did not stop after Close")
 	}
-	if err := lc.acquire(context.Background()); !errors.Is(err, errScopeClosed) {
-		t.Fatalf("acquire after Close = %v, want errScopeClosed", err)
+	if err := lc.acquire(context.Background()); !errors.Is(err, ErrScopeClosed) {
+		t.Fatalf("acquire after Close = %v, want ErrScopeClosed", err)
 	}
 }
 

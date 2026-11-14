@@ -32,7 +32,7 @@ func (g *flightGroup[T]) do(ctx context.Context, key string, fn func(ctx context
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
-		return zero, errScopeClosed
+		return zero, ErrScopeClosed
 	}
 	call, joined := g.calls[key]
 	if !joined {

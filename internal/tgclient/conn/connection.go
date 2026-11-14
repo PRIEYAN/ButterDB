@@ -120,7 +120,7 @@ func (c *Connection) Start(ctx context.Context) error {
 		return fmt.Errorf("conn: start: %w", err)
 	}
 	if c.live.isClosed() {
-		return fmt.Errorf("conn: start: %w", errScopeClosed)
+		return fmt.Errorf("conn: start: %w", ErrScopeClosed)
 	}
 	return nil
 }
