@@ -19,6 +19,7 @@ var (
 	ErrKeyFileExists      = errors.New("keyring: key file already exists")
 	ErrKeyLength          = errors.New("keyring: key must be exactly 32 bytes")
 	ErrInvalidKeyID       = errors.New("keyring: key id must be 16 lowercase hex characters")
+	ErrEmptyAccessKeyID   = errors.New("keyring: access key id is empty")
 	ErrEmptySecret        = errors.New("keyring: secret is empty")
 	ErrNilKey             = errors.New("keyring: key is required")
 	ErrNilRandom          = errors.New("keyring: random source is required")
