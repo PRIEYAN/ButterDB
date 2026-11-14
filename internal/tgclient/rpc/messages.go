@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/gotd/td/tg"
 
@@ -75,7 +76,7 @@ func mapSendError(err error) error {
 
 func (c *Client) positiveRandomID() (int64, error) {
 	var buf [8]byte
-	if _, err := c.random.Read(buf[:]); err != nil {
+	if _, err := io.ReadFull(c.random, buf[:]); err != nil {
 		return 0, fmt.Errorf("rpc: random id: %w", err)
 	}
 	id := int64(binary.LittleEndian.Uint64(buf[:]) & 0x7fffffffffffffff)

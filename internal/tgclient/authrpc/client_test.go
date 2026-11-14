@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gotd/td/bin"
+	"github.com/gotd/td/crypto/srp"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
@@ -217,8 +218,17 @@ func TestCheckPasswordSendsProofAndReturnsAccount(t *testing.T) {
 		t.Fatalf("CheckPassword = %+v, %v", account, err)
 	}
 	proof, ok := check.Password.(*tg.InputCheckPasswordSRP)
-	if !ok || proof.SRPID != 99 || len(proof.A) == 0 || len(proof.M1) == 0 {
+	if !ok || proof.SRPID != 99 {
 		t.Fatalf("proof = %#v", check.Password)
+	}
+	parameters := passwordParameters(t, "")
+	algo := parameters.CurrentAlgo.(*tg.PasswordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow)
+	want, err := srp.NewSRP(bytes.NewReader(bytes.Repeat([]byte{3}, 512))).Hash([]byte("123123"), parameters.SRPB, parameters.SecureRandom, srp.Input(*algo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(proof.A, want.A) || !bytes.Equal(proof.M1, want.M1) {
+		t.Fatal("proof does not match the reference srp answer")
 	}
 }
 
