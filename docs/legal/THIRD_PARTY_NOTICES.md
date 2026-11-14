@@ -227,6 +227,7 @@ release** must be confirmed against the exact version in `go.sum`.
 | `modernc.org/libc`, `modernc.org/mathutil`, `modernc.org/memory` | `modernc.org/sqlite` runtime | BSD-3-Clause; `modernc.org/libc` also carries code under the licenses of its upstream C sources (musl, MIT) | v1.67.6, v1.7.1, v1.11.0 | Checked header; verify before release |
 | `golang.org/x/crypto` | XChaCha20-Poly1305, HKDF | BSD-3-Clause, Copyright 2009 The Go Authors | v0.57.0 | Checked |
 | `golang.org/x/sync`, `golang.org/x/sys`, `golang.org/x/net` | Semaphores and single-flight, OS calls, gotd networking | BSD-3-Clause, Copyright 2009 The Go Authors | v0.23.0, v0.48.0, v0.60.0 | Checked |
+| `golang.org/x/time` | E10 send-rate limiter (`golang.org/x/time/rate`), only in `internal/tgclient/flow` | BSD-3-Clause, Copyright 2009 The Go Authors | v0.16.0 | Checked |
 | `golang.org/x/text`, `golang.org/x/term` | gotd and `setup` TTY input | BSD-3-Clause | as resolved | Verify before release |
 | `github.com/BurntSushi/toml` | Configuration file ([operations.md](../spec/operations.md) §2.1) | MIT, Copyright (c) 2013 TOML authors | v1.6.0 | Checked; adoption is a Default (owner may change) |
 | `github.com/prometheus/client_golang` | `/metrics` ([operations.md](../spec/operations.md) §15) | Apache-2.0, with a `NOTICE` file reproduced in §3.5 | v1.23.2 | Checked; adoption is a Default (owner may change) |
