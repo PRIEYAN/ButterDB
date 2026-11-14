@@ -43,7 +43,11 @@ func newTestCoordinator(t *testing.T, start time.Time) (*WriteCoordinator, *cloc
 	t.Helper()
 	fake := clock.NewFake(start)
 	sleeper := newScriptedSleeper()
-	coordinator, err := NewWriteCoordinator(WriteCoordinatorDeps{Clock: fake, Sleeper: sleeper})
+	limiter, err := NewSendLimiterWithClock(fake, sleeper, 600, 100, 120, 20)
+	if err != nil {
+		t.Fatalf("NewSendLimiterWithClock: %v", err)
+	}
+	coordinator, err := NewWriteCoordinator(WriteCoordinatorDeps{Clock: fake, Sleeper: sleeper, Limiter: limiter})
 	if err != nil {
 		t.Fatalf("NewWriteCoordinator: %v", err)
 	}
@@ -57,8 +61,9 @@ func TestWriteCoordinatorRejectsMissingDependencies(t *testing.T) {
 		name string
 		deps WriteCoordinatorDeps
 	}{
-		{"missing clock", WriteCoordinatorDeps{Sleeper: SystemSleeper{}}},
-		{"missing sleeper", WriteCoordinatorDeps{Clock: clock.System{}}},
+		{"missing clock", WriteCoordinatorDeps{Sleeper: SystemSleeper{}, Limiter: NewSendLimiter(20, 5, 6, 1)}},
+		{"missing sleeper", WriteCoordinatorDeps{Clock: clock.System{}, Limiter: NewSendLimiter(20, 5, 6, 1)}},
+		{"missing limiter", WriteCoordinatorDeps{Clock: clock.System{}, Sleeper: SystemSleeper{}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -276,4 +281,65 @@ func assertNoCoordinatorAction(t *testing.T, action <-chan struct{}, label strin
 		t.Fatalf("%s action ran before the shared cooldown elapsed", label)
 	default:
 	}
+}
+
+func TestWriteCoordinatorPacesEachClassWithItsOwnBucket(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fake := clock.NewFake(time.Unix(1_700_000_000, 0))
+		sleeper := &advancingSleeper{clock: fake}
+		limiter, err := NewSendLimiterWithClock(fake, sleeper, 20, 1, 6, 1)
+		if err != nil {
+			t.Fatalf("NewSendLimiterWithClock: %v", err)
+		}
+		coordinator, err := NewWriteCoordinator(WriteCoordinatorDeps{Clock: fake, Sleeper: sleeper, Limiter: limiter})
+		if err != nil {
+			t.Fatalf("NewWriteCoordinator: %v", err)
+		}
+		noop := func() error { return nil }
+		sends := []struct {
+			class tgclient.WriteClass
+			want  time.Duration
+		}{
+			{tgclient.WriteControl, 0},
+			{tgclient.WriteDocument, 0},
+			{tgclient.WriteDelete, 3 * time.Second},
+			{tgclient.WriteDocument, 7 * time.Second},
+		}
+		for i, send := range sends {
+			before := sleeper.total()
+			if err := coordinator.Do(context.Background(), send.class, noop); err != nil {
+				t.Fatalf("send %d: %v", i, err)
+			}
+			if got := sleeper.total() - before; got+time.Millisecond < send.want {
+				t.Fatalf("send %d waited %s, want at least %s", i, got, send.want)
+			}
+		}
+	})
+}
+
+func TestWriteCoordinatorFloodWaitStaysAFloorOnTopOfTheLimiter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		start := time.Unix(1_700_000_000, 0)
+		fake := clock.NewFake(start)
+		sleeper := &advancingSleeper{clock: fake}
+		limiter, err := NewSendLimiterWithClock(fake, sleeper, 20, 5, 6, 1)
+		if err != nil {
+			t.Fatalf("NewSendLimiterWithClock: %v", err)
+		}
+		coordinator, err := NewWriteCoordinator(WriteCoordinatorDeps{Clock: fake, Sleeper: sleeper, Limiter: limiter})
+		if err != nil {
+			t.Fatalf("NewWriteCoordinator: %v", err)
+		}
+		if err := coordinator.Do(context.Background(), tgclient.WriteControl, func() error {
+			return newFloodWait(40 * time.Second)
+		}); !errors.Is(err, tgclient.ErrFloodWait) {
+			t.Fatalf("seed error = %v, want flood wait", err)
+		}
+		if err := coordinator.Do(context.Background(), tgclient.WriteControl, func() error { return nil }); err != nil {
+			t.Fatalf("send after flood wait: %v", err)
+		}
+		if elapsed := fake.Now().Sub(start); elapsed < 40*time.Second {
+			t.Fatalf("send ran after %s, want at least the 40s flood wait", elapsed)
+		}
+	})
 }

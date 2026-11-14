@@ -17,11 +17,13 @@ var ErrInvalidWriteRequest = errors.New("flow: invalid write request")
 type WriteCoordinatorDeps struct {
 	Clock   clock.Clock
 	Sleeper Sleeper
+	Limiter *SendLimiter
 }
 
 type WriteCoordinator struct {
 	clock   clock.Clock
 	sleeper Sleeper
+	limiter *SendLimiter
 
 	messageSlot  chan struct{}
 	documentSlot chan struct{}
@@ -37,9 +39,13 @@ func NewWriteCoordinator(deps WriteCoordinatorDeps) (*WriteCoordinator, error) {
 	if deps.Sleeper == nil {
 		return nil, fmt.Errorf("flow: %w: sleeper", errs.ErrMissingDependency)
 	}
+	if deps.Limiter == nil {
+		return nil, fmt.Errorf("flow: %w: limiter", errs.ErrMissingDependency)
+	}
 	return &WriteCoordinator{
 		clock:        deps.Clock,
 		sleeper:      deps.Sleeper,
+		limiter:      deps.Limiter,
 		messageSlot:  make(chan struct{}, 1),
 		documentSlot: make(chan struct{}, 1),
 	}, nil
@@ -52,7 +58,7 @@ func (c *WriteCoordinator) Do(ctx context.Context, class tgclient.WriteClass, ac
 	if action == nil {
 		return fmt.Errorf("%w: action is required", ErrInvalidWriteRequest)
 	}
-	slot, err := c.slotFor(class)
+	slot, sendClass, err := c.routeFor(class)
 	if err != nil {
 		return err
 	}
@@ -66,10 +72,7 @@ func (c *WriteCoordinator) Do(ctx context.Context, class tgclient.WriteClass, ac
 		return ctx.Err()
 	}
 	// A concurrent write or the preceding send may have extended the cooldown while this call queued.
-	if err := c.waitForCooldown(ctx); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
+	if err := c.waitForTurn(ctx, sendClass); err != nil {
 		return err
 	}
 	actionErr := ConvertFloodWait(action())
@@ -77,15 +80,28 @@ func (c *WriteCoordinator) Do(ctx context.Context, class tgclient.WriteClass, ac
 	return actionErr
 }
 
-func (c *WriteCoordinator) slotFor(class tgclient.WriteClass) (chan struct{}, error) {
+func (c *WriteCoordinator) routeFor(class tgclient.WriteClass) (chan struct{}, SendClass, error) {
 	switch class {
 	case tgclient.WriteControl, tgclient.WriteDelete, tgclient.WriteChannel:
-		return c.messageSlot, nil
+		return c.messageSlot, SendControl, nil
 	case tgclient.WriteDocument:
-		return c.documentSlot, nil
+		return c.documentSlot, SendDocument, nil
 	default:
-		return nil, fmt.Errorf("%w: unknown write class %d", ErrInvalidWriteRequest, class)
+		return nil, 0, fmt.Errorf("%w: unknown write class %d", ErrInvalidWriteRequest, class)
 	}
+}
+
+func (c *WriteCoordinator) waitForTurn(ctx context.Context, sendClass SendClass) error {
+	if err := c.waitForCooldown(ctx); err != nil {
+		return err
+	}
+	if err := c.limiter.Wait(ctx, sendClass); err != nil {
+		return err
+	}
+	if err := c.waitForCooldown(ctx); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (c *WriteCoordinator) waitForCooldown(ctx context.Context) error {
