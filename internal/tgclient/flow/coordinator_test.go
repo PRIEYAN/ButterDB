@@ -3,6 +3,7 @@ package flow
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -342,4 +343,27 @@ func TestWriteCoordinatorFloodWaitStaysAFloorOnTopOfTheLimiter(t *testing.T) {
 			t.Fatalf("send ran after %s, want at least the 40s flood wait", elapsed)
 		}
 	})
+}
+
+func TestWriteCoordinatorRecordsTypedFloodWaitAndReturnsIt(t *testing.T) {
+	t.Parallel()
+
+	coordinator, fake, _ := newTestCoordinator(t, time.Unix(1_700_000_000, 0))
+	sent := &tgclient.FloodWaitError{Duration: 12 * time.Second}
+	err := coordinator.Do(context.Background(), tgclient.WriteDelete, func() error {
+		return fmt.Errorf("rpc: delete: %w", sent)
+	})
+	var typed *tgclient.FloodWaitError
+	if !errors.As(err, &typed) || typed != sent {
+		t.Fatalf("Do error = %v, want the original typed *FloodWaitError", err)
+	}
+	if !errors.Is(err, tgclient.ErrFloodWait) {
+		t.Fatalf("Do error %v does not match ErrFloodWait", err)
+	}
+	coordinator.mu.Lock()
+	blockedUntil := coordinator.blockedUntil
+	coordinator.mu.Unlock()
+	if want := fake.Now().Add(12 * time.Second); !blockedUntil.Equal(want) {
+		t.Fatalf("blockedUntil = %v, want %v", blockedUntil, want)
+	}
 }
