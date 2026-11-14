@@ -13,6 +13,8 @@ import (
 
 const rebuildReplayBatchSize = 256
 
+var ErrUnexpectedOutcome = errors.New("rebuild: applier returned an outcome other than applied or superseded")
+
 var ErrRegistryChannelAlone = errors.New("rebuild: the registry channel rebuilds only together with every bucket channel")
 
 type Dependencies struct {

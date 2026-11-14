@@ -37,6 +37,12 @@ func TestRebuildEquivalence(t *testing.T) {
 	e.exec(`INSERT INTO deleted_messages (channel_id, msg_id, source, recorded_at) VALUES (?, 8, 'cleanup', 1)`, bucketChannel)
 
 	before := e.snapshot()
+	if e.count(`SELECT COUNT(*) FROM projection_operations WHERE outcome = 'applied'`) == 0 {
+		t.Fatal("scenario recorded no applied operation rows")
+	}
+	if e.count(`SELECT COUNT(*) FROM pending_message_cleanup WHERE reason = 'duplicate'`) == 0 {
+		t.Fatal("scenario kept no duplicate cleanup row")
+	}
 	if len(before["objects"]) == 0 || len(before["pending_message_cleanup"]) == 0 || len(before["object_tombstones"]) == 0 || len(before["replay_log_rejects"]) < 3 {
 		t.Fatalf("scenario too thin: %d objects, %d cleanup, %d tombstones, %d rejects",
 			len(before["objects"]), len(before["pending_message_cleanup"]), len(before["object_tombstones"]), len(before["replay_log_rejects"]))

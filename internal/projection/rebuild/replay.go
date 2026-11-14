@@ -88,7 +88,7 @@ func readReplayBatch(ctx context.Context, tx projection.Tx, channelID, after int
 func (r *Rebuilder) applyRow(ctx context.Context, tx projection.Tx, channelID int64, row replayRow) (bool, error) {
 	op, err := wire.Parse(row.rawHeader)
 	if errors.Is(err, wire.ErrWireUnknownOp) {
-		return true, recordReject(ctx, tx, channelID, row, "", projection.RejectUnknownOp, "")
+		return true, recordReject(ctx, tx, channelID, row, "", projection.RejectUnknownOp, wire.ErrWireUnknownOp.Error())
 	}
 	if err != nil {
 		return false, fmt.Errorf("rebuild: parse msg %d of channel %d: %w", row.msgID, channelID, err)
@@ -119,7 +119,7 @@ func (r *Rebuilder) applyIsolated(ctx context.Context, tx projection.Tx, applier
 	result, applyErr := applier.Apply(ctx, tx, input)
 	var reject *projection.Reject
 	if errors.As(applyErr, &reject) {
-		if err := rollbackSavepoint(ctx, tx); err != nil {
+		if err := settleRejectedSavepoint(ctx, tx, reject.Code); err != nil {
 			return false, err
 		}
 		r.logger.Warn("rebuild: op rejected, continuing", "channel_id", channelID, "msg_id", row.msgID, "op_type", row.opType, "code", string(reject.Code))
@@ -131,7 +131,33 @@ func (r *Rebuilder) applyIsolated(ctx context.Context, tx projection.Tx, applier
 	if err := releaseSavepoint(ctx, tx); err != nil {
 		return false, err
 	}
-	return result.Kind == projection.OutcomeRejected, nil
+	if result.Kind != projection.OutcomeApplied && result.Kind != projection.OutcomeSuperseded {
+		return false, fmt.Errorf("rebuild: apply msg %d of channel %d: %w: %q", row.msgID, channelID, ErrUnexpectedOutcome, string(result.Kind))
+	}
+	return false, recordAppliedOperation(ctx, tx, channelID, row, jobID, result.Kind)
+}
+
+func settleRejectedSavepoint(ctx context.Context, tx projection.Tx, code projection.RejectCode) error {
+	// A duplicate op keeps the applier's writes, so its message stays queued for cleanup.
+	if code == projection.RejectDuplicateOp {
+		return releaseSavepoint(ctx, tx)
+	}
+	return rollbackSavepoint(ctx, tx)
+}
+
+func recordAppliedOperation(ctx context.Context, tx projection.Tx, channelID int64, row replayRow, jobID string, kind projection.OutcomeKind) error {
+	if jobID == "" {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO projection_operations (channel_id, op_id, op_type, msg_id, outcome, error)
+		VALUES (?, ?, ?, ?, ?, '')
+		ON CONFLICT (channel_id, op_id, op_type) DO NOTHING
+	`, channelID, jobID, row.opType, row.msgID, string(kind))
+	if err != nil {
+		return fmt.Errorf("rebuild: record outcome of msg %d of channel %d: %w", row.msgID, channelID, err)
+	}
+	return nil
 }
 
 func rollbackSavepoint(ctx context.Context, tx projection.Tx) error {

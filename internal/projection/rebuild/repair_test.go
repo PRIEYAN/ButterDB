@@ -166,6 +166,9 @@ func TestRepairKeyEqualsInOrderApply(t *testing.T) {
 		return e
 	}
 	inOrder := build([]int{0, 1, 2, 3, 4, 5})
+	if inOrder.count(`SELECT COUNT(*) FROM projection_operations WHERE outcome = 'applied'`) == 0 {
+		t.Fatal("scenario recorded no applied operation rows")
+	}
 	wantCleanup := inOrder.cleanupIDs()
 	want := inOrder.snapshot("objects", "object_tombstones", "projection_operations", "buckets")
 

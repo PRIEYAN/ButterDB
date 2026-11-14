@@ -77,13 +77,6 @@ func bucketLive(ctx context.Context, tx projection.Tx, channelID int64) (bool, e
 	return deleted == 0, err
 }
 
-func recordOutcome(ctx context.Context, tx projection.Tx, in projection.ApplyInput, outcome string) error {
-	_, err := tx.ExecContext(ctx, `
-		INSERT OR REPLACE INTO projection_operations (channel_id, op_id, op_type, msg_id, outcome) VALUES (?, ?, ?, ?, ?)
-	`, in.Observed.ChannelID, in.Op.JobID, string(in.Op.Type), in.Observed.MsgID, outcome)
-	return err
-}
-
 func duplicateAtOtherMsg(ctx context.Context, tx projection.Tx, in projection.ApplyInput) (bool, error) {
 	var msgID int64
 	err := tx.QueryRowContext(ctx, `SELECT msg_id FROM projection_operations WHERE channel_id = ? AND op_id = ? AND op_type = ?`,
@@ -105,7 +98,7 @@ func (bucketCreateApplier) Apply(ctx context.Context, tx projection.Tx, in proje
 	if err != nil {
 		return projection.ApplyResult{}, reject(projection.RejectBucketExists)
 	}
-	return projection.ApplyResult{Kind: projection.OutcomeApplied}, recordOutcome(ctx, tx, in, "applied")
+	return projection.ApplyResult{Kind: projection.OutcomeApplied}, nil
 }
 
 type bodyApplier struct{}
@@ -121,7 +114,7 @@ func (bodyApplier) Apply(ctx context.Context, tx projection.Tx, in projection.Ap
 	if err != nil {
 		return projection.ApplyResult{}, err
 	}
-	return projection.ApplyResult{Kind: projection.OutcomeApplied}, recordOutcome(ctx, tx, in, "applied")
+	return projection.ApplyResult{Kind: projection.OutcomeApplied}, nil
 }
 
 type encfgApplier struct{}
@@ -150,7 +143,7 @@ func (encfgApplier) Apply(ctx context.Context, tx projection.Tx, in projection.A
 	if err != nil {
 		return projection.ApplyResult{}, err
 	}
-	return projection.ApplyResult{Kind: projection.OutcomeApplied}, recordOutcome(ctx, tx, in, "applied")
+	return projection.ApplyResult{Kind: projection.OutcomeApplied}, nil
 }
 
 type putApplier struct{}
@@ -166,7 +159,13 @@ func (putApplier) Apply(ctx context.Context, tx projection.Tx, in projection.App
 		return projection.ApplyResult{}, reject(projection.RejectBadBodyRef)
 	}
 	if dup, err := duplicateAtOtherMsg(ctx, tx, in); err != nil || dup {
-		return projection.ApplyResult{}, orReject(err, projection.RejectDuplicateOp)
+		if err != nil {
+			return projection.ApplyResult{}, err
+		}
+		if err := queueCleanup(ctx, tx, channelID, msgID, op.Key, "duplicate", msgID); err != nil {
+			return projection.ApplyResult{}, err
+		}
+		return projection.ApplyResult{}, reject(projection.RejectDuplicateOp)
 	}
 	var tombstone, existing int64
 	if err := scanOptional(ctx, tx, &tombstone, `SELECT del_msg_id FROM object_tombstones WHERE channel_id = ? AND object_key = ?`, channelID, op.Key); err != nil {
@@ -179,7 +178,7 @@ func (putApplier) Apply(ctx context.Context, tx projection.Tx, in projection.App
 		if err := queueCleanup(ctx, tx, channelID, msgID, op.Key, "superseded", msgID); err != nil {
 			return projection.ApplyResult{}, err
 		}
-		return projection.ApplyResult{Kind: projection.OutcomeSuperseded}, recordOutcome(ctx, tx, in, "superseded")
+		return projection.ApplyResult{Kind: projection.OutcomeSuperseded}, nil
 	}
 	if existing != 0 {
 		if err := removeObject(ctx, tx, channelID, op.Key); err != nil {
@@ -207,7 +206,7 @@ func insertObject(ctx context.Context, tx projection.Tx, in projection.ApplyInpu
 	if err != nil {
 		return err
 	}
-	return recordOutcome(ctx, tx, in, "applied")
+	return nil
 }
 
 func removeObject(ctx context.Context, tx projection.Tx, channelID int64, key string) error {
@@ -260,7 +259,7 @@ func (delApplier) Apply(ctx context.Context, tx projection.Tx, in projection.App
 			return projection.ApplyResult{}, err
 		}
 	}
-	return projection.ApplyResult{Kind: projection.OutcomeApplied}, recordOutcome(ctx, tx, in, "applied")
+	return projection.ApplyResult{Kind: projection.OutcomeApplied}, nil
 }
 
 func orReject(err error, code projection.RejectCode) error {

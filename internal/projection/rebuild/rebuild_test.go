@@ -350,3 +350,198 @@ func (partialWriteThenReject) Apply(ctx context.Context, tx projection.Tx, in pr
 	}
 	return projection.ApplyResult{}, reject(projection.RejectSizeMismatch)
 }
+
+type writeThenRejectApplier struct {
+	code projection.RejectCode
+}
+
+func (a writeThenRejectApplier) Apply(ctx context.Context, tx projection.Tx, in projection.ApplyInput) (projection.ApplyResult, error) {
+	if err := queueCleanup(ctx, tx, in.Observed.ChannelID, in.Observed.MsgID, in.Op.Key, "duplicate", in.Observed.MsgID); err != nil {
+		return projection.ApplyResult{}, err
+	}
+	return projection.ApplyResult{}, reject(a.code)
+}
+
+type fixedKindApplier struct {
+	kind projection.OutcomeKind
+}
+
+func (a fixedKindApplier) Apply(context.Context, projection.Tx, projection.ApplyInput) (projection.ApplyResult, error) {
+	return projection.ApplyResult{Kind: a.kind}, nil
+}
+
+func TestRebuildRejectWritesFollowRejectCode(t *testing.T) {
+	cases := []struct {
+		name        string
+		code        projection.RejectCode
+		wantCleanup int
+	}{
+		{"duplicate op keeps applier writes", projection.RejectDuplicateOp, 1},
+		{"bad body ref rolls writes back", projection.RejectBadBodyRef, 0},
+		{"size mismatch rolls writes back", projection.RejectSizeMismatch, 0},
+		{"bucket not found rolls writes back", projection.RejectBucketNotFound, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.seedBucket("bucket-a", bucketChannel, 1)
+			e.applier.appliers[wire.OpPut] = writeThenRejectApplier{code: tc.code}
+			e.appendReplay(bucketChannel, 5, headerOf(t, putOp(5, "a", 0, 0)), false)
+
+			result := e.rebuildAll()
+
+			if result.Rejected != 1 {
+				t.Fatalf("rejected = %d, want 1", result.Rejected)
+			}
+			if n := e.count(`SELECT COUNT(*) FROM pending_message_cleanup WHERE channel_id = ? AND msg_id = 5 AND reason = 'duplicate'`, bucketChannel); n != tc.wantCleanup {
+				t.Fatalf("cleanup rows = %d, want %d", n, tc.wantCleanup)
+			}
+			if n := e.count(`SELECT COUNT(*) FROM replay_log_rejects WHERE channel_id = ? AND msg_id = 5 AND code = ?`, bucketChannel, string(tc.code)); n != 1 {
+				t.Fatalf("reject rows = %d, want 1", n)
+			}
+		})
+	}
+}
+
+func TestRebuildFailsOnUnexpectedApplierOutcome(t *testing.T) {
+	cases := []struct {
+		name string
+		kind projection.OutcomeKind
+	}{
+		{"rejected kind without reject error", projection.OutcomeRejected},
+		{"ignored kind", projection.OutcomeIgnored},
+		{"empty kind", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.seedBucket("bucket-a", bucketChannel, 1)
+			e.applier.appliers[wire.OpPut] = fixedKindApplier{kind: tc.kind}
+			e.appendReplay(bucketChannel, 5, headerOf(t, putOp(5, "a", 0, 0)), false)
+
+			if _, err := e.rebuild.RebuildAll(context.Background(), e.db); !errors.Is(err, ErrUnexpectedOutcome) {
+				t.Fatalf("rebuild error = %v, want ErrUnexpectedOutcome", err)
+			}
+		})
+	}
+}
+
+func TestRebuildRecordsAppliedAndSupersededOutcomes(t *testing.T) {
+	e := newEnv(t)
+	e.seedBucket("bucket-a", bucketChannel, 1)
+	e.appendReplay(bucketChannel, 6, headerOf(t, putOp(6, "a", 0, 0)), false)
+	e.appendReplay(bucketChannel, 5, headerOf(t, putOp(5, "a", 0, 0)), false)
+	e.appendReplay(bucketChannel, 7, headerOf(t, bodyOp(7, 3)), true)
+
+	e.rebuildAll()
+
+	cases := []struct {
+		name    string
+		opID    string
+		opType  string
+		msgID   int64
+		outcome string
+	}{
+		{"bucket create", jobID(1), "bcreate", 1, "applied"},
+		{"older put replays first and applies", jobID(5), "put", 5, "applied"},
+		{"newer put replays last and applies", jobID(6), "put", 6, "applied"},
+		{"body document", jobID(7), "body", 7, "applied"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var msgID int64
+			var outcome string
+			err := e.db.Reader().QueryRow(`SELECT msg_id, outcome FROM projection_operations WHERE op_id = ? AND op_type = ?`, tc.opID, tc.opType).Scan(&msgID, &outcome)
+			if err != nil {
+				t.Fatalf("outcome row: %v", err)
+			}
+			if msgID != tc.msgID || outcome != tc.outcome {
+				t.Fatalf("outcome row = msg %d %s, want msg %d %s", msgID, outcome, tc.msgID, tc.outcome)
+			}
+		})
+	}
+}
+
+func TestRebuildDuplicateJobPutStaysRejected(t *testing.T) {
+	cases := []struct {
+		name   string
+		repair func(e *env)
+	}{
+		{"after rebuild all", func(e *env) { e.rebuildAll() }},
+		{"after repair key", func(e *env) {
+			if _, err := e.rebuild.RepairKey(context.Background(), e.db, bucketChannel, "a"); err != nil {
+				t.Fatalf("repair key: %v", err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.seedBucket("bucket-a", bucketChannel, 1)
+			e.project(bucketChannel, 5, headerOf(t, putOp(5, "a", 0, 0)), false)
+			e.project(bucketChannel, 6, headerOf(t, putOp(5, "a", 0, 0)), false)
+			wantRejects := e.dump("replay_log_rejects")
+			wantObjects := e.dump("objects")
+			wantCleanup := e.dump("pending_message_cleanup")
+			if e.count(`SELECT COUNT(*) FROM replay_log_rejects WHERE msg_id = 6 AND code = 'duplicate_op'`) != 1 {
+				t.Fatal("incremental projection did not reject the duplicate put")
+			}
+
+			tc.repair(e)
+
+			if got := e.dump("replay_log_rejects"); !reflect.DeepEqual(got, wantRejects) {
+				t.Fatalf("rejects = %v, want %v", got, wantRejects)
+			}
+			if got := e.dump("objects"); !reflect.DeepEqual(got, wantObjects) {
+				t.Fatalf("objects = %v, want %v", got, wantObjects)
+			}
+			if got := e.dump("pending_message_cleanup"); !reflect.DeepEqual(got, wantCleanup) {
+				t.Fatalf("cleanup = %v, want %v", got, wantCleanup)
+			}
+			if got := e.objectPut(bucketChannel, "a"); got != 5 {
+				t.Fatalf("object a put_msg_id = %d, want 5", got)
+			}
+		})
+	}
+}
+
+func TestRebuildUnknownOpRejectDetailMatchesProjector(t *testing.T) {
+	e := newEnv(t)
+	e.seedBucket("bucket-a", bucketChannel, 1)
+	header := "TDX1|t=future|j=" + jobID(7)
+	e.appendReplay(bucketChannel, 7, header, false)
+	e.exec(`
+		INSERT INTO replay_log_rejects (channel_id, msg_id, code, op_type, job_id, raw_header, detail, msg_date)
+		VALUES (?, 7, 'unknown_op', 'future', ?, ?, ?, 1007)
+	`, bucketChannel, jobID(7), header, wire.ErrWireUnknownOp.Error())
+	before := e.dump("replay_log_rejects")
+
+	e.rebuildAll()
+
+	var detail string
+	if err := e.db.Reader().QueryRow(`SELECT detail FROM replay_log_rejects WHERE channel_id = ? AND msg_id = 7`, bucketChannel).Scan(&detail); err != nil {
+		t.Fatalf("reject row: %v", err)
+	}
+	if detail != wire.ErrWireUnknownOp.Error() {
+		t.Fatalf("detail = %q, want %q", detail, wire.ErrWireUnknownOp.Error())
+	}
+	if got := e.dump("replay_log_rejects"); len(got) != len(before) {
+		t.Fatalf("reject rows = %d, want %d", len(got), len(before))
+	}
+}
+
+func TestRebuildRecordsSupersededOutcome(t *testing.T) {
+	e := newEnv(t)
+	e.seedBucket("bucket-a", bucketChannel, 1)
+	e.applier.appliers[wire.OpPut] = fixedKindApplier{kind: projection.OutcomeSuperseded}
+	e.appendReplay(bucketChannel, 5, headerOf(t, putOp(5, "a", 0, 0)), false)
+
+	result := e.rebuildAll()
+
+	if result.Applied != 2 || result.Rejected != 0 {
+		t.Fatalf("result = %+v, want 2 applied and 0 rejected", result)
+	}
+	if n := e.count(`SELECT COUNT(*) FROM projection_operations WHERE channel_id = ? AND op_id = ? AND op_type = 'put' AND msg_id = 5 AND outcome = 'superseded'`, bucketChannel, jobID(5)); n != 1 {
+		t.Fatalf("superseded outcome rows = %d, want 1", n)
+	}
+}
