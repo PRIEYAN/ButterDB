@@ -149,8 +149,10 @@ func (p *Projector) recordApplied(ctx context.Context, tx projection.Tx, row log
 }
 
 func (p *Projector) recordApplyReject(ctx context.Context, tx projection.Tx, row logRow, reject *projection.Reject) (projection.Outcome, error) {
-	if _, err := tx.ExecContext(ctx, "ROLLBACK TO "+applySavepoint); err != nil {
-		return projection.Outcome{}, fmt.Errorf("projection log: roll back savepoint: %w", err)
+	if reject.Code != projection.RejectDuplicateOp {
+		if _, err := tx.ExecContext(ctx, "ROLLBACK TO "+applySavepoint); err != nil {
+			return projection.Outcome{}, fmt.Errorf("projection log: roll back savepoint: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, "RELEASE "+applySavepoint); err != nil {
 		return projection.Outcome{}, fmt.Errorf("projection log: release savepoint: %w", err)

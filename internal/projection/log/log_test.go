@@ -192,6 +192,52 @@ func TestProjectFromOpDuplicateOpRejectWritesNoOperationRow(t *testing.T) {
 	}
 }
 
+func TestProjectFromOpDuplicateOpRejectKeepsApplierWrites(t *testing.T) {
+	db := openProjectionDB(t)
+	duplicate := applyFunc(func(ctx context.Context, tx projection.Tx, in projection.ApplyInput) (projection.ApplyResult, error) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pending_message_cleanup (channel_id, msg_id, reason, object_key, queued_by_msg_id) VALUES (?, ?, 'duplicate', 'k', ?)`,
+			in.Observed.ChannelID, in.Observed.MsgID, in.Observed.MsgID); err != nil {
+			return projection.ApplyResult{}, err
+		}
+		return projection.ApplyResult{}, &projection.Reject{Code: projection.RejectDuplicateOp, Detail: "recorded at another message"}
+	})
+	projector := newTestProjector(t, map[wire.OpType]projection.Applier{wire.OpPut: duplicate})
+
+	outcome, err := projector.ProjectFromOp(context.Background(), db, observed(9, formatted(t, putOp(testJobID, "k"))))
+	if err != nil || outcome.RejectCode != projection.RejectDuplicateOp {
+		t.Fatalf("outcome %+v, error %v", outcome, err)
+	}
+	if got := rowText(t, db, `SELECT reason || '|' || queued_by_msg_id FROM pending_message_cleanup WHERE msg_id = 9`); got != "duplicate|9" {
+		t.Fatalf("cleanup row = %q, want the applier's duplicate row kept", got)
+	}
+	if got := countRows(t, db, `SELECT COUNT(*) FROM projection_operations`); got != 0 {
+		t.Fatalf("projection_operations rows = %d, a duplicate_op reject writes none", got)
+	}
+	if got := countRows(t, db, `SELECT COUNT(*) FROM replay_log_rejects WHERE code = 'duplicate_op'`); got != 1 {
+		t.Fatalf("duplicate_op reject rows = %d, want 1", got)
+	}
+}
+
+func TestProjectFromOpOtherRejectRollsBackApplierWrites(t *testing.T) {
+	db := openProjectionDB(t)
+	rejecting := applyFunc(func(ctx context.Context, tx projection.Tx, in projection.ApplyInput) (projection.ApplyResult, error) {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pending_message_cleanup (channel_id, msg_id, reason, object_key, queued_by_msg_id) VALUES (?, ?, 'duplicate', 'k', ?)`,
+			in.Observed.ChannelID, in.Observed.MsgID, in.Observed.MsgID); err != nil {
+			return projection.ApplyResult{}, err
+		}
+		return projection.ApplyResult{}, &projection.Reject{Code: projection.RejectBadBodyRef, Detail: "bm is not below the put"}
+	})
+	projector := newTestProjector(t, map[wire.OpType]projection.Applier{wire.OpPut: rejecting})
+
+	outcome, err := projector.ProjectFromOp(context.Background(), db, observed(9, formatted(t, putOp(testJobID, "k"))))
+	if err != nil || outcome.RejectCode != projection.RejectBadBodyRef {
+		t.Fatalf("outcome %+v, error %v", outcome, err)
+	}
+	if got := countRows(t, db, `SELECT COUNT(*) FROM pending_message_cleanup`); got != 0 {
+		t.Fatalf("pending_message_cleanup rows = %d, a non-duplicate reject must roll back", got)
+	}
+}
+
 func TestProjectFromOpWrapsRejectsFromTheApplier(t *testing.T) {
 	db := openProjectionDB(t)
 	wrapped := applyFunc(func(context.Context, projection.Tx, projection.ApplyInput) (projection.ApplyResult, error) {
