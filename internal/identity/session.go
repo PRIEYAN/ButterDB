@@ -13,7 +13,6 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"github.com/PRIEYAN/ButterDB/internal/crypto/keyring"
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 )
 
@@ -23,7 +22,7 @@ const (
 )
 
 type SessionKeys interface {
-	SessionKey() *keyring.Key
+	LeaseSessionKey() ([]byte, error)
 }
 
 type SessionStoreDependencies struct {
@@ -88,12 +87,12 @@ func NewSessionStore(deps SessionStoreDependencies) (*SessionStore, error) {
 }
 
 func (s *SessionStore) aeadForSession() (cipher.AEAD, error) {
-	key := s.keys.SessionKey()
-	if key == nil {
-		return nil, ErrSessionKeyMissing
+	key, err := s.keys.LeaseSessionKey()
+	if err != nil {
+		return nil, fmt.Errorf("identity: session key: %w", errors.Join(ErrSessionKeyMissing, err))
 	}
-	defer key.Clear()
-	aead, err := chacha20poly1305.NewX(key.Bytes())
+	defer clear(key)
+	aead, err := chacha20poly1305.NewX(key)
 	if err != nil {
 		return nil, fmt.Errorf("identity: session cipher: %w", err)
 	}

@@ -12,27 +12,34 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/PRIEYAN/ButterDB/internal/crypto/keyring"
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/platform/fsx"
 	"github.com/PRIEYAN/ButterDB/internal/platform/secretfile"
 )
 
-func testRing(t *testing.T, seed byte) *keyring.Ring {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "server.key")
-	if _, err := keyring.Generate(path, bytes.NewReader(bytes.Repeat([]byte{seed}, 64))); err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	ring, err := keyring.LoadWithRand(path, bytes.NewReader(bytes.Repeat([]byte{seed}, 64)))
-	if err != nil {
-		t.Fatalf("load key: %v", err)
-	}
-	t.Cleanup(ring.Close)
-	return ring
+type fakeSessionKeys struct {
+	key    []byte
+	closed bool
+	leased [][]byte
 }
 
-func newSessionStore(t *testing.T, ring *keyring.Ring, role Role, path string) *SessionStore {
+func (f *fakeSessionKeys) LeaseSessionKey() ([]byte, error) {
+	if f.closed {
+		return nil, errors.New("keyring closed")
+	}
+	lease := bytes.Clone(f.key)
+	f.leased = append(f.leased, lease)
+	return lease, nil
+}
+
+func (f *fakeSessionKeys) Close() { f.closed = true }
+
+func testRing(t *testing.T, seed byte) *fakeSessionKeys {
+	t.Helper()
+	return &fakeSessionKeys{key: bytes.Repeat([]byte{seed}, 32)}
+}
+
+func newSessionStore(t *testing.T, ring SessionKeys, role Role, path string) *SessionStore {
 	t.Helper()
 	writer, err := secretfile.New(fsx.OS{})
 	if err != nil {
@@ -237,6 +244,34 @@ func TestSessionStoreRejectsEmptySessionAndClosedRing(t *testing.T) {
 	ring.Close()
 	if err := store.StoreSession(context.Background(), []byte("s")); !errors.Is(err, ErrSessionKeyMissing) {
 		t.Fatalf("store with closed ring error = %v, want ErrSessionKeyMissing", err)
+	}
+	if _, err := store.LoadSession(context.Background()); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("load of a missing session error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestSessionLeasedKeyIsClearedOnEveryPath(t *testing.T) {
+	keys := testRing(t, 1)
+	path := sessionPath(t)
+	store := newSessionStore(t, keys, RolePrimary, path)
+	ctx := context.Background()
+	if err := store.StoreSession(ctx, []byte("session")); err != nil {
+		t.Fatalf("store: %v", err)
+	}
+	if _, err := store.LoadSession(ctx); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	wrong := newSessionStore(t, testRing(t, 2), RolePrimary, path)
+	if _, err := wrong.LoadSession(ctx); !errors.Is(err, ErrSessionUnseal) {
+		t.Fatalf("load error = %v, want ErrSessionUnseal", err)
+	}
+	if len(keys.leased) != 2 {
+		t.Fatalf("leases = %d, want 2", len(keys.leased))
+	}
+	for i, lease := range keys.leased {
+		if !bytes.Equal(lease, make([]byte, len(lease))) {
+			t.Fatalf("lease %d was not cleared", i)
+		}
 	}
 }
 
