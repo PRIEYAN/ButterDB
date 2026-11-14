@@ -92,14 +92,14 @@ that lands in two destinations has one row per destination.
 | `backend/crypto/random_access.go` (`StoredOffset`, `ciphertextChunkOffset`) | `internal/crypto/format` | ported | 02 | ported 1b2385f |
 | `backend/projection/schema.go` | `internal/storage/schema` | ported | 02 | not used: DDL taken from schema.md section 4.1, file not opened |
 | `backend/sync/initial_scan_spool.go` (DDL) | `internal/storage/schema` | ported | 02 | not used: DDL taken from schema.md section 4.1, file not opened |
-| `backend/projection/log.go` | `internal/projection/log` | ported | 03 | planned |
-| `backend/projection/rebuild.go` | `internal/projection/rebuild` | ported | 03 | planned |
-| `backend/projection/encryption_rebuild.go` | `internal/projection/rebuild` | ported | 03 | planned |
-| `backend/projection/managed_messages.go` | `internal/storage/objectrepo` | ported | 03 | planned |
-| `backend/projection/reconcile.go` | `internal/storage/objectrepo` | ported | 03 | planned |
-| `backend/crypto/stream.go` (`EncryptStream`, `DecryptStream`, subkey derivation) | `internal/crypto/stream` | ported | 03 | planned |
-| `backend/crypto/random_access.go` | `internal/crypto/randomaccess` | ported | 03 | planned |
-| `backend/crypto/vault.go` (key wrap and key check only; Argon2id and the passphrase vault are not ported) | `internal/crypto/keyring` | ported | 03 | planned |
+| `backend/projection/log.go` | `internal/projection/log` | ported | 03 | ported eff7c7b |
+| `backend/projection/rebuild.go` | `internal/projection/rebuild` | ported | 03 | ported d442493 |
+| `backend/projection/encryption_rebuild.go` | `internal/projection/rebuild` | ported | 03 | ported d442493 |
+| `backend/projection/managed_messages.go` | `internal/storage/objectrepo` | ported | 03 | ported 9be17ab |
+| `backend/projection/reconcile.go` | `internal/storage/objectrepo` | ported | 03 | ported 9be17ab |
+| `backend/crypto/stream.go` (`EncryptStream`, `DecryptStream`, subkey derivation) | `internal/crypto/stream` | ported | 03 | ported ce83399 |
+| `backend/crypto/random_access.go` | `internal/crypto/randomaccess` | ported | 03 | ported bb20600 |
+| `backend/crypto/vault.go` (key wrap and key check only; Argon2id and the passphrase vault are not ported) | `internal/crypto/keyring` | ported | 03 | ported d447325 |
 | `backend/projection/errors.go` | `internal/ingest/put` | ported | 03 (lands in 06) | planned |
 | `backend/tgclient/client.go` | `internal/tgclient` | ported | 04 | planned |
 | `backend/tgclient/range.go` | `internal/tgclient` | ported | 04 | planned |
@@ -158,11 +158,11 @@ that lands in two destinations has one row per destination.
 | `cmd/tdrived/main.go` | `cmd/butterdbd` | design reference | 01 | referenced 21a40db |
 | `cmd/tdrive/output.go` | `cmd/butterdbd` | design reference | 01 | referenced 21a40db |
 | `backend/storage_sqlite.go` | `internal/storage/sqlitedb` | design reference | 02 | referenced 9d868f4 |
-| `backend/projection/apply.go` | `internal/projection/apply` | design reference | 03 | planned |
-| `backend/projection/writable_apply.go` | `internal/projection/apply` | design reference | 03 | planned |
-| `backend/projection/encryption.go` | `internal/storage/bucketrepo` | design reference | 03 | planned |
-| `backend/projection/read.go` | `internal/storage/objectrepo` | design reference | 03 | planned |
-| `backend/services/encryption/key_lease.go` | `internal/crypto/keyring` | design reference | 03 | planned |
+| `backend/projection/apply.go` | `internal/projection/apply` | design reference | 03 | not used: pattern only, not consulted |
+| `backend/projection/writable_apply.go` | `internal/projection/apply` | design reference | 03 | not used: pattern only, not consulted |
+| `backend/projection/encryption.go` | `internal/storage/bucketrepo` | design reference | 03 | referenced 8b8b620 |
+| `backend/projection/read.go` | `internal/storage/objectrepo` | design reference | 03 | referenced 9be17ab |
+| `backend/services/encryption/key_lease.go` | `internal/crypto/keyring` | design reference | 03 | referenced 9bcd5d3 |
 | `cmd/tdrive/auth_drive_commands.go` | `cmd/butterdbd` (`setup`, `rebuild`) | design reference | 04, 11 | planned |
 | `backend/auth/config.go` | `internal/buckets` | design reference | 05 | planned |
 | `backend/core/peer_resolution.go` | `internal/buckets` | design reference | 05 | planned |
