@@ -101,28 +101,28 @@ that lands in two destinations has one row per destination.
 | `backend/crypto/random_access.go` | `internal/crypto/randomaccess` | ported | 03 | ported bb20600 |
 | `backend/crypto/vault.go` (key wrap and key check only; Argon2id and the passphrase vault are not ported) | `internal/crypto/keyring` | ported | 03 | ported d447325 |
 | `backend/projection/errors.go` | `internal/ingest/put` | ported | 03 (lands in 06) | planned |
-| `backend/tgclient/client.go` | `internal/tgclient` | ported | 04 | planned |
-| `backend/tgclient/range.go` | `internal/tgclient` | ported | 04 | planned |
-| `backend/tgclient/session.go` | `internal/tgclient/conn` | ported | 04 | planned |
-| `backend/tgclient/gotd.go` | `internal/tgclient/conn`, `internal/tgclient/send`, `internal/tgclient/rpc` | ported | 04 | planned |
-| `backend/tgclient/gotd_pool.go` | `internal/tgclient/conn` | ported | 04 | planned |
-| `backend/tgclient/gotd_range.go` | `internal/tgclient/rangeio`, `internal/tgclient/conn` | ported | 04 | planned |
-| `backend/tgclient/gotd_media.go` | `internal/tgclient/rangeio` | ported | 04 | planned |
-| `backend/tgclient/download.go` | `internal/tgclient/rangeio` | ported | 04 | planned |
-| `backend/tgclient/floodwait_retry.go` | `internal/tgclient/flow` | ported | 04 | planned |
-| `backend/tgclient/write_coordinator.go` | `internal/tgclient/flow` | ported | 04 | planned |
-| `backend/tgclient/getfile_limiter.go` | `internal/tgclient/flow` | ported | 04 | planned |
-| `backend/tgclient/transient.go` | `internal/tgclient/flow` | ported | 04 | planned |
-| `backend/tgclient/idempotency.go` | `internal/tgclient/send` | ported | 04 | planned |
-| `backend/tgclient/upload_part_retry.go` | `internal/tgclient/send` | ported | 04 | planned |
-| `backend/tgclient/upload_media_retry.go` | `internal/tgclient/send` | ported | 04 | planned |
-| `backend/tgclient/personal_drive.go` | `internal/tgclient/rpc` | ported | 04 | planned |
-| `backend/tgclient/fake.go` | `internal/tgclient/faketg` | ported | 04 | planned |
-| `backend/auth/peer_resolution.go` | `internal/tgclient/rpc` | ported | 04 | planned |
-| `backend/auth/session_storage.go` | `internal/tgclient/conn` | ported | 04 | planned |
-| `backend/auth/auth.go` | `internal/tgclient/authrpc`, `internal/identity`, `internal/tgclient/conn` | ported | 04 | planned |
-| `backend/services/auth/service.go` | `internal/identity` | ported | 04 | planned |
-| `backend/livesync/activity.go` (`Handle`, `ChannelIDsFromUpdates`) | `internal/tgclient/conn` | ported | 04 | planned |
+| `backend/tgclient/client.go` | `internal/tgclient` | ported | 04 | ported d62c211 |
+| `backend/tgclient/range.go` | `internal/tgclient` | ported | 04 | ported d62c211 |
+| `backend/tgclient/session.go` | `internal/tgclient/conn` | ported | 04 | ported 262a9e6 |
+| `backend/tgclient/gotd.go` | `internal/tgclient/conn`, `internal/tgclient/send`, `internal/tgclient/rpc` | ported | 04 | ported 262a9e6, 292a62b, 53b52e2 |
+| `backend/tgclient/gotd_pool.go` | `internal/tgclient/conn` | ported | 04 | ported 262a9e6 |
+| `backend/tgclient/gotd_range.go` | `internal/tgclient/rangeio`, `internal/tgclient/conn` | ported | 04 | ported 09263ec, ed7d766 |
+| `backend/tgclient/gotd_media.go` | `internal/tgclient/rangeio` | ported | 04 | ported 09263ec |
+| `backend/tgclient/download.go` | `internal/tgclient/rangeio` | ported | 04 | ported 09263ec |
+| `backend/tgclient/floodwait_retry.go` | `internal/tgclient/flow` | ported | 04 | ported c505673 |
+| `backend/tgclient/write_coordinator.go` | `internal/tgclient/flow` | ported | 04 | ported 2433425 |
+| `backend/tgclient/getfile_limiter.go` | `internal/tgclient/flow` | ported | 04 | ported 2433425 |
+| `backend/tgclient/transient.go` | `internal/tgclient/flow` | ported | 04 | ported c505673 |
+| `backend/tgclient/idempotency.go` | `internal/tgclient/send` | ported | 04 | ported 292a62b |
+| `backend/tgclient/upload_part_retry.go` | `internal/tgclient/send` | ported | 04 | ported 292a62b |
+| `backend/tgclient/upload_media_retry.go` | `internal/tgclient/send` | ported | 04 | ported 292a62b |
+| `backend/tgclient/personal_drive.go` | `internal/tgclient/rpc` | ported | 04 | ported 53b52e2 |
+| `backend/tgclient/fake.go` | `internal/tgclient/faketg` | ported | 04 | ported 0922506 |
+| `backend/auth/peer_resolution.go` | `internal/tgclient/rpc` | ported | 04 | ported 53b52e2 |
+| `backend/auth/session_storage.go` | `internal/tgclient/conn` | ported | 04 | ported 262a9e6 |
+| `backend/auth/auth.go` | `internal/tgclient/authrpc`, `internal/identity`, `internal/tgclient/conn` | ported | 04 | ported 7b3357c, 4dd305a, 262a9e6 |
+| `backend/services/auth/service.go` | `internal/identity` | ported | 04 | ported 4dd305a |
+| `backend/livesync/activity.go` (`Handle`, `ChannelIDsFromUpdates`) | `internal/tgclient/conn` | ported | 04 | ported 262a9e6 |
 | `backend/sync/sync.go` | `internal/syncer/scan`, `internal/syncer/reconcile` | ported | 05 | planned |
 | `backend/sync/difference.go` | `internal/syncer/difference` | ported | 05 | planned |
 | `backend/sync/parse.go` | `internal/syncer/scan` | ported | 05 | planned |
@@ -163,7 +163,7 @@ that lands in two destinations has one row per destination.
 | `backend/projection/encryption.go` | `internal/storage/bucketrepo` | design reference | 03 | referenced 8b8b620 |
 | `backend/projection/read.go` | `internal/storage/objectrepo` | design reference | 03 | referenced 9be17ab |
 | `backend/services/encryption/key_lease.go` | `internal/crypto/keyring` | design reference | 03 | referenced 9bcd5d3 |
-| `cmd/tdrive/auth_drive_commands.go` | `cmd/butterdbd` (`setup`, `rebuild`) | design reference | 04, 11 | planned |
+| `cmd/tdrive/auth_drive_commands.go` | `cmd/butterdbd` (`setup`, `rebuild`) | design reference | 04, 11 | referenced 9a4561c for setup (pattern from the port map, file not read); rebuild planned in 11 |
 | `backend/auth/config.go` | `internal/buckets` | design reference | 05 | planned |
 | `backend/core/peer_resolution.go` | `internal/buckets` | design reference | 05 | planned |
 | `backend/services/personaldrive/service.go` | `internal/buckets`, `internal/syncer/reconcile` | design reference | 05 | planned |
