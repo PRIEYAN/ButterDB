@@ -666,3 +666,7 @@ func TestSystemSleeperHonorsCancellation(t *testing.T) {
 		t.Fatalf("zero Sleep = %v, want context canceled", err)
 	}
 }
+
+func rawPremiumFloodWait() error {
+	return tgerr.New(420, "FLOOD_PREMIUM_WAIT_9")
+}
