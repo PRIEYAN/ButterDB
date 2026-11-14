@@ -20,6 +20,7 @@ const (
 	historyPageLimit         = 100
 	differencePageLimit      = 100
 	ownedDialogsBatchSize    = 100
+	internalServerErrorCode  = 500
 )
 
 type Dependencies struct {
@@ -98,8 +99,8 @@ func mapError(operation string, err error) error {
 }
 
 func isDefiniteRejection(err error) bool {
-	if _, ok := tgerr.As(err); ok {
-		return true
+	if rpcErr, ok := tgerr.As(err); ok {
+		return rpcErr.Code < internalServerErrorCode
 	}
 	var flood *tgclient.FloodWaitError
 	return errors.As(err, &flood)

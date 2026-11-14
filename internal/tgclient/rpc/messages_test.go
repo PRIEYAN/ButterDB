@@ -134,6 +134,7 @@ func TestSavedMessagesErrorClassification(t *testing.T) {
 		{"flood wait is definite", rpcError(420, "FLOOD_WAIT_5"), false, true},
 		{"rpc rejection is definite", rpcError(400, "MESSAGE_EMPTY"), false, false},
 		{"transport failure is unknown", transport, true, false},
+		{"internal server error is unknown", rpcError(500, "INTERNAL"), true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client, _ := newTestClient(t, func(context.Context, bin.Encoder, bin.Decoder) error { return tc.failure })

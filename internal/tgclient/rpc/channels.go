@@ -11,14 +11,16 @@ import (
 	"github.com/PRIEYAN/ButterDB/internal/tgclient"
 )
 
-var dialogFolders = []int{0, 1}
+const (
+	primaryDialogFolderID  = 0
+	archivedDialogFolderID = 1
+)
 
 type folderDialogsQuery struct {
 	api      *tg.Client
 	folderID int
 }
 
-// gotd's generated query builder does not mark the conditional folder flag present, including for folder 0.
 func (q folderDialogsQuery) Query(ctx context.Context, request dialogs.Request) (tg.MessagesDialogsClass, error) {
 	req := &tg.MessagesGetDialogsRequest{
 		OffsetDate: request.OffsetDate,
@@ -26,16 +28,16 @@ func (q folderDialogsQuery) Query(ctx context.Context, request dialogs.Request) 
 		OffsetPeer: request.OffsetPeer,
 		Limit:      request.Limit,
 	}
+	// gotd's generated query builder does not mark the conditional folder flag present, including for folder 0.
 	req.SetFolderID(q.folderID)
 	return q.api.MessagesGetDialogs(ctx, req)
 }
 
 func folderQueries(api *tg.Client) []dialogs.Query {
-	queries := make([]dialogs.Query, 0, len(dialogFolders))
-	for _, folderID := range dialogFolders {
-		queries = append(queries, folderDialogsQuery{api: api, folderID: folderID})
+	return []dialogs.Query{
+		folderDialogsQuery{api: api, folderID: primaryDialogFolderID},
+		folderDialogsQuery{api: api, folderID: archivedDialogFolderID},
 	}
-	return queries
 }
 
 func (c *Client) CreateChannel(ctx context.Context, title, about string) (tgclient.InputPeer, error) {
@@ -47,7 +49,7 @@ func (c *Client) CreateChannel(ctx context.Context, title, about string) (tgclie
 			About:     about,
 		})
 		if err != nil {
-			return err
+			return mapSendError(err)
 		}
 		created, ok := createdChannel(updates)
 		if !ok {

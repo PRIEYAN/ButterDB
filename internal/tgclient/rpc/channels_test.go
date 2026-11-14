@@ -260,6 +260,33 @@ func TestCreateChannelWithoutChannelInAnswerIsUnknownOutcome(t *testing.T) {
 	}
 }
 
+func TestCreateChannelErrorClassification(t *testing.T) {
+	transport := errors.New("connection reset")
+	for _, tc := range []struct {
+		name        string
+		failure     error
+		wantUnknown bool
+		wantFlood   bool
+	}{
+		{"transport failure is unknown", transport, true, false},
+		{"internal server error is unknown", rpcError(500, "INTERNAL"), true, false},
+		{"flood wait is definite", rpcError(420, "FLOOD_WAIT_5"), false, true},
+		{"rpc rejection is definite", rpcError(400, "CHANNELS_ADMIN_PUBLIC_TOO_MUCH"), false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _ := newTestClient(t, func(context.Context, bin.Encoder, bin.Decoder) error { return tc.failure })
+			_, err := client.CreateChannel(t.Context(), "b", "")
+			var flood *tgclient.FloodWaitError
+			if errors.Is(err, tgclient.ErrSendOutcomeUnknown) != tc.wantUnknown || errors.As(err, &flood) != tc.wantFlood {
+				t.Fatalf("err = %v, want unknown=%v flood=%v", err, tc.wantUnknown, tc.wantFlood)
+			}
+			if tc.wantUnknown && !errors.Is(err, tc.failure) {
+				t.Fatalf("err = %v does not keep the cause", err)
+			}
+		})
+	}
+}
+
 func TestSelfReturnsAccount(t *testing.T) {
 	client, _ := newTestClient(t, func(_ context.Context, _ bin.Encoder, output bin.Decoder) error {
 		return reply(output, &tg.UserClassVector{Elems: []tg.UserClass{&tg.User{ID: 42, Self: true, FirstName: "Ada", Username: "ada"}}})
