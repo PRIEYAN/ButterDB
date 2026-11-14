@@ -1,0 +1,668 @@
+package flow
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"github.com/gotd/td/tgerr"
+
+	"github.com/PRIEYAN/ButterDB/internal/tgclient"
+)
+
+func newFloodWait(duration time.Duration) error {
+	return &tgclient.FloodWaitError{Duration: duration}
+}
+
+type counterReader struct{ next byte }
+
+func (r *counterReader) Read(p []byte) (int, error) {
+	for i := range p {
+		r.next += 37
+		p[i] = r.next
+	}
+	return len(p), nil
+}
+
+func TestUploadFloodWaitPolicyWaitsThroughRepeatedLongCooldowns(t *testing.T) {
+	t.Parallel()
+
+	waits := []time.Duration{16 * time.Second, 15 * time.Second, 45 * time.Second, 90 * time.Second, 16 * time.Second}
+	policy := DefaultUploadFloodWaitRetryPolicy()
+	var slept []time.Duration
+	policy.Sleeper = SleeperFunc(func(_ context.Context, wait time.Duration) error {
+		slept = append(slept, wait)
+		return nil
+	})
+	attempts := 0
+	err := policy.Do(t.Context(), func() error {
+		attempts++
+		if attempts <= len(waits) {
+			return newFloodWait(waits[attempts-1])
+		}
+		return nil
+	})
+	if err != nil || attempts != len(waits)+1 || !slices.Equal(slept, waits) {
+		t.Fatalf("Do = %v, attempts %d, waits %v; want success after all %v", err, attempts, slept, waits)
+	}
+}
+
+func TestUploadFloodWaitPolicyCancellationStopsBlockedWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		attempts := 0
+		go func() {
+			done <- DefaultUploadFloodWaitRetryPolicy().Do(ctx, func() error {
+				attempts++
+				return newFloodWait(time.Hour)
+			})
+		}()
+		synctest.Wait()
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) || attempts != 1 {
+			t.Fatalf("Do = %v after %d attempts, want cancellation after one", err, attempts)
+		}
+	})
+}
+
+func TestUploadFloodWaitPolicyKeepsTransportRetryBudget(t *testing.T) {
+	t.Parallel()
+
+	policy := DefaultUploadFloodWaitRetryPolicy()
+	policy.Sleeper = SleeperFunc(func(context.Context, time.Duration) error { return nil })
+	want := errors.New("connection reset by peer")
+	attempts := 0
+	err := policy.Do(t.Context(), func() error {
+		attempts++
+		if attempts%2 == 1 {
+			return newFloodWait(time.Minute)
+		}
+		return want
+	})
+	if !errors.Is(err, want) || attempts != 10 {
+		t.Fatalf("Do = %v after %d attempts, want transport error after four transport retries", err, attempts)
+	}
+}
+
+func TestFloodWaitRetryPolicyRetriesWithinBudget(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	var slept []time.Duration
+	policy := FloodWaitRetryPolicy{
+		MaxRetries:   2,
+		MaxWait:      5 * time.Second,
+		MaxTotalWait: 8 * time.Second,
+		Sleeper: SleeperFunc(func(ctx context.Context, wait time.Duration) error {
+			slept = append(slept, wait)
+			return nil
+		}),
+	}
+	err := policy.Do(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return newFloodWait(2 * time.Second)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if len(slept) != 2 || slept[0] != 2*time.Second || slept[1] != 2*time.Second {
+		t.Fatalf("sleeps = %v, want [2s 2s]", slept)
+	}
+}
+
+func TestFloodWaitRetryPolicyRejectsWaitBeyondBudget(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	policy := FloodWaitRetryPolicy{
+		MaxRetries:   5,
+		MaxWait:      time.Second,
+		MaxTotalWait: 5 * time.Second,
+		Sleeper: SleeperFunc(func(context.Context, time.Duration) error {
+			t.Fatal("Sleep called for an over-budget wait")
+			return nil
+		}),
+	}
+	want := newFloodWait(2 * time.Second)
+	err := policy.Do(context.Background(), func() error {
+		attempts++
+		return want
+	})
+	if !errors.Is(err, tgclient.ErrFloodWait) {
+		t.Fatalf("Do error = %v, want flood wait", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestFloodWaitRetryPolicyHonorsCancellationWhileSleeping(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	policy := FloodWaitRetryPolicy{
+		MaxRetries:   1,
+		MaxWait:      time.Second,
+		MaxTotalWait: time.Second,
+		Sleeper: SleeperFunc(func(ctx context.Context, wait time.Duration) error {
+			cancel()
+			return SystemSleeper{}.Sleep(ctx, wait)
+		}),
+	}
+	err := policy.Do(ctx, func() error {
+		return newFloodWait(time.Second)
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Do error = %v, want context canceled", err)
+	}
+}
+
+func TestDefaultWriteFloodWaitRetryPolicyIsBounded(t *testing.T) {
+	t.Parallel()
+
+	policy := DefaultWriteFloodWaitRetryPolicy()
+	if policy.MaxRetries <= 0 || policy.MaxWait <= 0 || policy.MaxTotalWait <= 0 {
+		t.Fatalf("default policy is unbounded: %+v", policy)
+	}
+	if policy.MaxTransientRetries <= 0 || policy.TransientBackoff <= 0 {
+		t.Fatalf("default policy has no transient budget: %+v", policy)
+	}
+	if policy.TransientJitter <= 0 {
+		t.Fatalf("default policy has no transient jitter: %+v", policy)
+	}
+}
+
+func TestFloodWaitRetryPolicyReturnsNonFloodErrorWithoutRetry(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("network failed")
+	attempts := 0
+	err := (FloodWaitRetryPolicy{MaxRetries: 3, MaxWait: time.Second, MaxTotalWait: 3 * time.Second}).Do(context.Background(), func() error {
+		attempts++
+		return want
+	})
+	if !errors.Is(err, want) || attempts != 1 {
+		t.Fatalf("Do = %v after %d attempts, want original after one", err, attempts)
+	}
+}
+
+func TestFloodWaitRetryPolicyEnforcesTotalBudget(t *testing.T) {
+	t.Parallel()
+
+	attempts := 0
+	sleeps := 0
+	policy := FloodWaitRetryPolicy{
+		MaxRetries:   3,
+		MaxWait:      3 * time.Second,
+		MaxTotalWait: 3 * time.Second,
+		Sleeper: SleeperFunc(func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		}),
+	}
+	err := policy.Do(context.Background(), func() error {
+		attempts++
+		return newFloodWait(2 * time.Second)
+	})
+	if !errors.Is(err, tgclient.ErrFloodWait) {
+		t.Fatalf("Do error = %v, want flood wait", err)
+	}
+	if attempts != 2 || sleeps != 1 {
+		t.Fatalf("attempts=%d sleeps=%d, want 2 and 1", attempts, sleeps)
+	}
+}
+
+func TestFloodWaitRetryPolicyChecksContextBeforeAction(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := (FloodWaitRetryPolicy{}).Do(ctx, func() error {
+		t.Fatal("action called after cancellation")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Do error = %v, want context canceled", err)
+	}
+}
+
+func TestSleepContextCompletesAndHandlesZeroWait(t *testing.T) {
+	t.Parallel()
+
+	if err := (SystemSleeper{}).Sleep(context.Background(), 0); err != nil {
+		t.Fatalf("zero sleep: %v", err)
+	}
+	if err := (SystemSleeper{}).Sleep(context.Background(), time.Millisecond); err != nil {
+		t.Fatalf("positive sleep: %v", err)
+	}
+}
+
+func TestFloodWaitRetryPolicyRejectsUnboundedOrMissingInputs(t *testing.T) {
+	t.Parallel()
+
+	validAction := func() error { return nil }
+	for name, call := range map[string]func() error{
+		"nil context": func() error {
+			return (FloodWaitRetryPolicy{}).Do(nil, validAction)
+		},
+		"nil action": func() error {
+			return (FloodWaitRetryPolicy{}).Do(context.Background(), nil)
+		},
+		"negative retries": func() error {
+			return (FloodWaitRetryPolicy{MaxRetries: -1}).Do(context.Background(), validAction)
+		},
+		"unbounded wait": func() error {
+			return (FloodWaitRetryPolicy{MaxRetries: 1}).Do(context.Background(), validAction)
+		},
+		"transient retries without backoff": func() error {
+			return (FloodWaitRetryPolicy{MaxTransientRetries: 3}).Do(context.Background(), validAction)
+		},
+		"negative transient jitter": func() error {
+			return (FloodWaitRetryPolicy{TransientJitter: -1}).Do(context.Background(), validAction)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := call(); !errors.Is(err, ErrInvalidFloodWaitRetryPolicy) {
+				t.Fatalf("Do error = %v, want invalid policy", err)
+			}
+		})
+	}
+}
+
+func TestTransientRetryPolicyRecoversAfterTransportFailure(t *testing.T) {
+	t.Parallel()
+
+	engineClosed := errors.New("rpcDoRequest: retryUntilAck: engine forcibly closed: context canceled")
+	var attempts int
+	var slept []time.Duration
+	policy := FloodWaitRetryPolicy{
+		MaxRetries:          2,
+		MaxWait:             time.Second,
+		MaxTotalWait:        2 * time.Second,
+		MaxTransientRetries: 3,
+		TransientBackoff:    2 * time.Second,
+		MaxTransientBackoff: 30 * time.Second,
+		Sleeper: SleeperFunc(func(ctx context.Context, wait time.Duration) error {
+			slept = append(slept, wait)
+			return nil
+		}),
+	}
+	err := policy.Do(context.Background(), func() error {
+		attempts++
+		if attempts == 1 {
+			return engineClosed
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if len(slept) != 1 || slept[0] != 2*time.Second {
+		t.Fatalf("sleeps = %v, want [2s]", slept)
+	}
+}
+
+func TestTransientRetryPolicyBacksOffDoublingUpToCap(t *testing.T) {
+	t.Parallel()
+
+	engineClosed := errors.New("engine forcibly closed")
+	var attempts int
+	var slept []time.Duration
+	policy := FloodWaitRetryPolicy{
+		MaxTransientRetries: 4,
+		TransientBackoff:    2 * time.Second,
+		MaxTransientBackoff: 6 * time.Second,
+		Sleeper: SleeperFunc(func(ctx context.Context, wait time.Duration) error {
+			slept = append(slept, wait)
+			return nil
+		}),
+	}
+	err := policy.Do(context.Background(), func() error {
+		attempts++
+		return engineClosed
+	})
+	if !errors.Is(err, engineClosed) {
+		t.Fatalf("Do error = %v, want original", err)
+	}
+	if attempts != 5 {
+		t.Fatalf("attempts = %d, want 5 (1 initial + 4 retries)", attempts)
+	}
+	want := []time.Duration{2 * time.Second, 4 * time.Second, 6 * time.Second, 6 * time.Second}
+	if len(slept) != len(want) {
+		t.Fatalf("sleeps = %v, want %v", slept, want)
+	}
+	for i := range want {
+		if slept[i] != want[i] {
+			t.Fatalf("sleeps = %v, want %v", slept, want)
+		}
+	}
+}
+
+func TestTransientRetryPolicyKeepsConstantBackoffWithoutCap(t *testing.T) {
+	t.Parallel()
+
+	engineClosed := errors.New("engine forcibly closed")
+	var attempts int
+	var slept []time.Duration
+	policy := FloodWaitRetryPolicy{
+		MaxTransientRetries: 3,
+		TransientBackoff:    2 * time.Second,
+		Sleeper: SleeperFunc(func(ctx context.Context, wait time.Duration) error {
+			slept = append(slept, wait)
+			return nil
+		}),
+	}
+	err := policy.Do(context.Background(), func() error {
+		attempts++
+		return engineClosed
+	})
+	if !errors.Is(err, engineClosed) {
+		t.Fatalf("Do error = %v, want original", err)
+	}
+	if attempts != 4 {
+		t.Fatalf("attempts = %d, want 4 (1 initial + 3 retries)", attempts)
+	}
+	want := []time.Duration{2 * time.Second, 2 * time.Second, 2 * time.Second}
+	if len(slept) != len(want) {
+		t.Fatalf("sleeps = %v, want %v", slept, want)
+	}
+	for i := range want {
+		if slept[i] != want[i] {
+			t.Fatalf("sleeps = %v, want %v", slept, want)
+		}
+	}
+}
+
+func TestTransientBackoffHonorsCapWithoutOverflow(t *testing.T) {
+	t.Parallel()
+
+	const maxDuration = time.Duration(1<<63 - 1)
+	tests := []struct {
+		name   string
+		policy FloodWaitRetryPolicy
+		retry  int
+		want   time.Duration
+	}{
+		{
+			name: "initial delay above cap",
+			policy: FloodWaitRetryPolicy{
+				TransientBackoff:    8 * time.Second,
+				MaxTransientBackoff: 6 * time.Second,
+			},
+			want: 6 * time.Second,
+		},
+		{
+			name: "doubling would overflow duration",
+			policy: FloodWaitRetryPolicy{
+				TransientBackoff:    maxDuration/2 + 1,
+				MaxTransientBackoff: maxDuration,
+			},
+			retry: 1,
+			want:  maxDuration,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.policy.transientBackoff(test.retry); got != test.want {
+				t.Fatalf("transientBackoff(%d) = %s, want %s", test.retry, got, test.want)
+			}
+		})
+	}
+}
+
+func TestTransientBackoffJitterStaysBounded(t *testing.T) {
+	t.Parallel()
+
+	policy := FloodWaitRetryPolicy{
+		TransientBackoff:    2 * time.Second,
+		MaxTransientBackoff: 2500 * time.Millisecond,
+		TransientJitter:     time.Second,
+		Random:              &counterReader{},
+	}
+	for i := 0; i < 100; i++ {
+		got := policy.transientBackoff(0)
+		if got < 2*time.Second || got > 2500*time.Millisecond {
+			t.Fatalf("jittered backoff = %s, want [2s, 2.5s]", got)
+		}
+	}
+}
+
+func TestSaturatingDurationAdd(t *testing.T) {
+	t.Parallel()
+
+	const maxDuration = time.Duration(1<<63 - 1)
+	if got := saturatingDurationAdd(maxDuration-time.Second, 2*time.Second); got != maxDuration {
+		t.Fatalf("saturating add = %s, want %s", got, maxDuration)
+	}
+	if got := saturatingDurationAdd(time.Second, time.Second); got != 2*time.Second {
+		t.Fatalf("regular add = %s, want 2s", got)
+	}
+}
+
+func TestTransientRetryPolicyCallerCancellationWinsOverEngineClose(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	attempts := 0
+	err := (FloodWaitRetryPolicy{
+		MaxTransientRetries: 3,
+		TransientBackoff:    time.Millisecond,
+	}).Do(ctx, func() error {
+		attempts++
+		cancel()
+		return errors.New("engine forcibly closed: context canceled")
+	})
+	if attempts != 1 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("attempts = %d err = %v, want single attempt ending in caller cancellation", attempts, err)
+	}
+}
+
+func TestTransientRetryPolicySleepCancellationStopsRetrying(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	policy := FloodWaitRetryPolicy{
+		MaxTransientRetries: 3,
+		TransientBackoff:    time.Millisecond,
+		Sleeper: SleeperFunc(func(ctx context.Context, wait time.Duration) error {
+			cancel()
+			return SystemSleeper{}.Sleep(ctx, wait)
+		}),
+	}
+	err := policy.Do(ctx, func() error {
+		return errors.New("connection reset by peer")
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Do error = %v, want context canceled", err)
+	}
+}
+
+func TestTransientAndFloodBudgetsAreIndependent(t *testing.T) {
+	t.Parallel()
+
+	var attempts int
+	policy := FloodWaitRetryPolicy{
+		MaxRetries:   2,
+		MaxWait:      time.Second,
+		MaxTotalWait: 10 * time.Second,
+		Sleeper:      SleeperFunc(func(context.Context, time.Duration) error { return nil }),
+
+		MaxTransientRetries: 2,
+		TransientBackoff:    time.Millisecond,
+	}
+	err := policy.Do(context.Background(), func() error {
+		attempts++
+		switch attempts {
+		case 1:
+			return errors.New("engine forcibly closed")
+		case 2:
+			return newFloodWait(10 * time.Millisecond)
+		case 3:
+			return errors.New("connection reset by peer")
+		case 4:
+			return newFloodWait(10 * time.Millisecond)
+		case 5:
+			return errors.New("unexpected EOF")
+		}
+		t.Fatal("action called after both budgets were exhausted")
+		return nil
+	})
+	if err == nil || err.Error() != "unexpected EOF" {
+		t.Fatalf("Do error = %v, want unexpected EOF", err)
+	}
+	if attempts != 5 {
+		t.Fatalf("attempts = %d, want 5", attempts)
+	}
+}
+
+func TestUploadNetworkRetryPolicyRecoversPastTransportBudget(t *testing.T) {
+	t.Parallel()
+	policy := DefaultUploadNetworkRetryPolicy()
+	policy.TransientJitter = 0
+	var slept []time.Duration
+	policy.Sleeper = SleeperFunc(func(_ context.Context, wait time.Duration) error {
+		slept = append(slept, wait)
+		return nil
+	})
+	attempts := 0
+	err := policy.Do(t.Context(), func() error {
+		attempts++
+		if attempts <= 8 {
+			return errors.New("connection reset by peer")
+		}
+		return nil
+	})
+	want := []time.Duration{2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second}
+	if err != nil || attempts != 9 || !slices.Equal(slept, want) {
+		t.Fatalf("Do = %v after %d attempts with waits %v; want recovery and waits %v", err, attempts, slept, want)
+	}
+}
+
+func TestUploadNetworkRetryPolicyStopsOnPermanentFailure(t *testing.T) {
+	t.Parallel()
+	policy := DefaultUploadNetworkRetryPolicy()
+	policy.Sleeper = SleeperFunc(func(context.Context, time.Duration) error { return nil })
+	permanent := errors.New("FILE_PART_INVALID")
+	attempts := 0
+	err := policy.Do(t.Context(), func() error {
+		attempts++
+		if attempts <= 6 {
+			return errors.New("connection reset by peer")
+		}
+		return permanent
+	})
+	if !errors.Is(err, permanent) || attempts != 7 {
+		t.Fatalf("Do = %v after %d attempts; want permanent error after recovery", err, attempts)
+	}
+}
+
+func TestUploadNetworkRetryPolicyCancellationInterruptsOfflineWait(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		attempts := 0
+		go func() {
+			done <- DefaultUploadNetworkRetryPolicy().Do(ctx, func() error {
+				attempts++
+				return errors.New("connection reset by peer")
+			})
+		}()
+		synctest.Wait()
+		cancel()
+		if err := <-done; !errors.Is(err, context.Canceled) || attempts != 1 {
+			t.Fatalf("Do = %v after %d attempts, want cancellation during first backoff", err, attempts)
+		}
+	})
+}
+
+func TestUploadNetworkRetryRequiresBackoff(t *testing.T) {
+	policy := FloodWaitRetryPolicy{RetryTransportUntilCanceled: true}
+	if err := policy.Validate(); !errors.Is(err, ErrInvalidFloodWaitRetryPolicy) {
+		t.Fatalf("Validate = %v, want invalid policy without backoff", err)
+	}
+}
+
+func TestPremiumFloodWaitIsFloodWait(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want time.Duration
+	}{
+		{"flood wait", "FLOOD_WAIT_7", 7 * time.Second},
+		{"premium flood wait", "FLOOD_PREMIUM_WAIT_30", 30 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := tgerr.New(420, tt.raw)
+			if wait, ok := FloodWaitDuration(raw); !ok || wait != tt.want {
+				t.Fatalf("FloodWaitDuration = %s, %v; want %s", wait, ok, tt.want)
+			}
+			converted := ConvertFloodWait(raw)
+			var typed *tgclient.FloodWaitError
+			if !errors.As(converted, &typed) || typed.Duration != tt.want {
+				t.Fatalf("converted = %v, want *FloodWaitError of %s", converted, tt.want)
+			}
+			if !errors.Is(converted, tgclient.ErrFloodWait) {
+				t.Fatalf("converted %v does not match ErrFloodWait", converted)
+			}
+		})
+	}
+	if converted := ConvertFloodWait(tgerr.New(400, "CHANNEL_INVALID")); errors.Is(converted, tgclient.ErrFloodWait) {
+		t.Fatal("non flood error converted to flood wait")
+	}
+	if ConvertFloodWait(nil) != nil {
+		t.Fatal("nil converted to non nil")
+	}
+}
+
+func TestPremiumFloodWaitRetriesAsFloodWait(t *testing.T) {
+	t.Parallel()
+
+	policy := DefaultWriteFloodWaitRetryPolicy()
+	var slept []time.Duration
+	policy.Sleeper = SleeperFunc(func(_ context.Context, wait time.Duration) error {
+		slept = append(slept, wait)
+		return nil
+	})
+	attempts := 0
+	err := policy.Do(t.Context(), func() error {
+		attempts++
+		if attempts == 1 {
+			return tgerr.New(420, "FLOOD_PREMIUM_WAIT_5")
+		}
+		return nil
+	})
+	if err != nil || !slices.Equal(slept, []time.Duration{5 * time.Second}) {
+		t.Fatalf("Do = %v with waits %v, want success after one 5s wait", err, slept)
+	}
+}
+
+func TestSystemSleeperHonorsCancellation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := (SystemSleeper{}).Sleep(ctx, time.Hour); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Sleep = %v, want context canceled", err)
+	}
+	if err := (SystemSleeper{}).Sleep(ctx, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("zero Sleep = %v, want context canceled", err)
+	}
+}
