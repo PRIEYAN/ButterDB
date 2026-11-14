@@ -46,6 +46,7 @@ type Connection struct {
 
 	baseCancel context.CancelFunc
 	dials      *flightGroup[telegram.CloseInvoker]
+	refreshes  *flightGroup[refreshedDocument]
 
 	mu     sync.Mutex
 	client gotdClient
@@ -56,7 +57,8 @@ type Connection struct {
 }
 
 var (
-	_ scope.Invoker = (*Connection)(nil)
+	_ scope.Invoker                = (*Connection)(nil)
+	_ scope.FileReferenceRefresher = (*Connection)(nil)
 )
 
 func New(deps Dependencies) (*Connection, error) {
@@ -91,6 +93,7 @@ func newWithFactory(deps Dependencies, factory clientFactory) *Connection {
 		factory:     factory,
 		baseCancel:  cancel,
 		dials:       newFlightGroup[telegram.CloseInvoker](base, poolDialTimeout),
+		refreshes:   newFlightGroup[refreshedDocument](base, refreshTimeout),
 		pools:       make(map[int]telegram.CloseInvoker),
 		poolRetryAt: make(map[int]time.Time),
 	}
@@ -127,8 +130,9 @@ func (c *Connection) Close(ctx context.Context) error {
 	c.closeMediaConns()
 	liveErr := c.live.closeWait(ctx)
 	dialErr := c.dials.close(ctx)
+	refreshErr := c.refreshes.close(ctx)
 	c.closeMediaConns()
-	for _, err := range []error{liveErr, dialErr} {
+	for _, err := range []error{liveErr, dialErr, refreshErr} {
 		if err != nil {
 			return fmt.Errorf("conn: close: %w", err)
 		}
