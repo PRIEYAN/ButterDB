@@ -88,7 +88,7 @@ func TestInsertChannelInsertsAndUpdates(t *testing.T) {
 	repo, db := newRepo(t)
 	ctx := context.Background()
 	channel := Channel{ChannelID: 5555, AccessHash: 777, Title: "butterDB bucket photos", Kind: KindBucket}
-	if err := repo.UpsertChannel(ctx, channel); err != nil {
+	if err := repo.InsertChannel(ctx, channel); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
 	got := mustGet(t, repo, 5555)
@@ -100,7 +100,7 @@ func TestInsertChannelInsertsAndUpdates(t *testing.T) {
 	channel.AccessHash = 888
 	channel.Title = "renamed"
 	channel.Kind = KindRegistry
-	if err := repo.UpsertChannel(ctx, channel); err != nil {
+	if err := repo.InsertChannel(ctx, channel); err != nil {
 		t.Fatalf("second insert: %v", err)
 	}
 	got = mustGet(t, repo, 5555)
@@ -124,7 +124,7 @@ func TestInsertChannelRejectsBadInput(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := repo.UpsertChannel(context.Background(), tt.channel)
+			err := repo.InsertChannel(context.Background(), tt.channel)
 			if !errors.Is(err, ErrInvalidChannel) {
 				t.Fatalf("error = %v, want ErrInvalidChannel", err)
 			}
@@ -192,27 +192,33 @@ func TestSetChannelPtsRoundTripsThroughGetAndListChannels(t *testing.T) {
 	repo, db := newRepo(t)
 	ctx := context.Background()
 	seedChannel(t, repo, 3333, KindBucket)
-	err := db.Write(ctx, func(tx *sql.Tx) error {
-		return repo.SetSyncCursorTx(ctx, tx, 3333, 0, 424242)
-	})
-	if err != nil {
-		t.Fatalf("set cursor: %v", err)
+	execAll(t, db, `UPDATE channels SET last_synced_msg = 77, initial_sync_done = 1, needs_projection_rebuild = 1 WHERE channel_id = 3333`)
+	if err := repo.SetChannelPts(ctx, 3333, 424242); err != nil {
+		t.Fatalf("set pts: %v", err)
 	}
-	if got := mustGet(t, repo, 3333); got.Pts != 424242 {
-		t.Fatalf("pts = %d, want 424242", got.Pts)
+	got := mustGet(t, repo, 3333)
+	if got.Pts != 424242 || got.LastSyncedMsg != 77 || !got.InitialSyncDone || !got.NeedsProjectionRebuild {
+		t.Fatalf("after pts-only write = %+v", got)
 	}
 	channels, err := repo.ListChannels(ctx)
 	if err != nil || len(channels) != 1 || channels[0].Pts != 424242 {
 		t.Fatalf("list = %+v, err = %v", channels, err)
 	}
 	err = db.Write(ctx, func(tx *sql.Tx) error {
-		return repo.SetSyncCursorTx(ctx, tx, 3333, 0, 999)
+		return repo.SetChannelPtsTx(ctx, tx, 3333, 999)
 	})
 	if err != nil {
-		t.Fatalf("set cursor again: %v", err)
+		t.Fatalf("set pts tx: %v", err)
 	}
-	if got := mustGet(t, repo, 3333).Pts; got != 999 {
-		t.Fatalf("pts after second write = %d, want 999", got)
+	got = mustGet(t, repo, 3333)
+	if got.Pts != 999 || got.LastSyncedMsg != 77 || !got.InitialSyncDone || !got.NeedsProjectionRebuild {
+		t.Fatalf("after tx pts write = %+v", got)
+	}
+	if err := repo.SetChannelPts(ctx, 3333, -1); !errors.Is(err, ErrInvalidChannel) {
+		t.Fatalf("negative pts error = %v, want ErrInvalidChannel", err)
+	}
+	if err := repo.SetChannelPts(ctx, 99, 1); !errors.Is(err, ErrChannelNotFound) {
+		t.Fatalf("unknown channel error = %v, want ErrChannelNotFound", err)
 	}
 }
 

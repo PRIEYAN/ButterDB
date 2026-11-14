@@ -125,6 +125,10 @@ func (r *Repository) ListChannels(ctx context.Context) ([]Channel, error) {
 	return channels, nil
 }
 
+func (r *Repository) InsertChannel(ctx context.Context, channel Channel) error {
+	return r.UpsertChannel(ctx, channel)
+}
+
 func (r *Repository) UpsertChannel(ctx context.Context, channel Channel) error {
 	if err := validateUpsert(channel); err != nil {
 		return fmt.Errorf("channelrepo: upsert channel: %w", err)
