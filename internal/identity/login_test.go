@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -77,6 +79,16 @@ func TestCredentialsRoundTripAndValidation(t *testing.T) {
 			creds, err := f.svc.LoadCredentials(context.Background())
 			if err != nil || creds.APIID != tt.apiID || creds.APIHash != testAPIHash {
 				t.Fatalf("load = %+v, %v", creds, err)
+			}
+			if runtime.GOOS == "windows" {
+				return
+			}
+			info, err := os.Stat(f.svc.credentialsPath)
+			if err != nil {
+				t.Fatalf("stat credentials: %v", err)
+			}
+			if info.Mode().Perm() != 0o600 {
+				t.Fatalf("credentials mode = %04o, want 0600", info.Mode().Perm())
 			}
 		})
 	}
