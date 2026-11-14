@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/PRIEYAN/ButterDB/internal/platform/clock"
@@ -26,6 +27,7 @@ type buildInfo struct {
 type application struct {
 	stdout  io.Writer
 	stderr  io.Writer
+	stdin   io.Reader
 	environ []string
 	build   buildInfo
 	clock   clock.Clock
@@ -39,6 +41,7 @@ func newApplication(stdout, stderr io.Writer, environ []string, build buildInfo)
 	return &application{
 		stdout:  stdout,
 		stderr:  stderr,
+		stdin:   os.Stdin,
 		environ: environ,
 		build:   build,
 		clock:   clock.System{},
@@ -65,7 +68,11 @@ func (a *application) run(ctx context.Context, args []string) int {
 		return a.runCheckConfig(rest)
 	case "serve":
 		return a.runServe(ctx, rest)
-	case "setup", "admin-token", "rebuild", "snapshot", "restore", "tgprobe":
+	case "setup":
+		return a.runSetup(ctx, rest)
+	case "tgprobe":
+		return a.runTGProbe(ctx, rest)
+	case "admin-token", "rebuild", "snapshot", "restore":
 		a.fail(fmt.Errorf("subcommand %q is not available in this build", name))
 		return exitFailure
 	default:

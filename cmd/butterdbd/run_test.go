@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	tgidentity "github.com/PRIEYAN/ButterDB/internal/identity"
 	"github.com/PRIEYAN/ButterDB/internal/platform/config"
 	"github.com/PRIEYAN/ButterDB/internal/platform/datadir"
 	"github.com/PRIEYAN/ButterDB/internal/platform/processlock"
+	"github.com/PRIEYAN/ButterDB/internal/tgclient"
 )
 
 func TestRunDispatch(t *testing.T) {
@@ -25,8 +27,7 @@ func TestRunDispatch(t *testing.T) {
 		{"no arguments", nil, exitUsage, "", "usage:"},
 		{"help", []string{"help"}, exitOK, "subcommands:", ""},
 		{"unknown subcommand", []string{"frobnicate"}, exitUsage, "", `unknown subcommand "frobnicate"`},
-		{"setup not built", []string{"setup"}, exitFailure, "", "not available in this build"},
-		{"tgprobe not built", []string{"tgprobe"}, exitFailure, "", "not available in this build"},
+		{"admin-token not built", []string{"admin-token"}, exitFailure, "", "not available in this build"},
 		{"bad flag", []string{"version", "--nope"}, exitUsage, "", "flag provided but not defined"},
 	}
 	for _, tc := range cases {
@@ -79,6 +80,8 @@ func TestExitCodeFor(t *testing.T) {
 		{"foreign data directory", fmt.Errorf("core: %w", datadir.ErrForeignOwner), exitUsage},
 		{"locked", fmt.Errorf("core: start: %w", processlock.ErrAlreadyRunning), exitLocked},
 		{"joined lock failure", errors.Join(errors.New("other"), processlock.ErrAlreadyRunning), exitLocked},
+		{"telegram flood wait", fmt.Errorf("core: setup: %w", tgclient.ErrFloodWait), exitTelegram},
+		{"telegram unavailable", fmt.Errorf("x: %w", tgidentity.ErrTelegramUnavailable), exitTelegram},
 		{"anything else", errors.New("boom"), exitFailure},
 	}
 	for _, tc := range cases {

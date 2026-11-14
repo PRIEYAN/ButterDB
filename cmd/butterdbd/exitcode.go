@@ -34,6 +34,8 @@ func exitCodeFor(err error) int {
 		errors.Is(err, datadir.ErrLooseMode),
 		errors.Is(err, datadir.ErrForeignOwner):
 		return exitUsage
+	case telegramFailure(err):
+		return exitTelegram
 	default:
 		return exitFailure
 	}
