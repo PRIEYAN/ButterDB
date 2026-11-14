@@ -28,9 +28,11 @@ func NewRegistry(deps Dependencies) (*Registry, error) {
 		wire.OpBody:         bodyApplier{},
 		wire.OpPut:          putApplier{},
 		wire.OpDel:          delApplier{},
+		wire.OpRegistry:     markerApplier{},
 		wire.OpBucketCreate: bucketCreateApplier{},
 		wire.OpBucketConfig: bucketConfigApplier{},
 		wire.OpBucketDelete: bucketDeleteApplier{generation: deps.Generation},
+		wire.OpEncConfig:    encConfigApplier{generation: deps.Generation},
 	}}, nil
 }
 

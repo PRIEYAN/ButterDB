@@ -12,7 +12,7 @@ import (
 func TestRegistryLookup(t *testing.T) {
 	e := newEnv(t)
 	var registry projection.Registry = e.registry
-	known := []wire.OpType{wire.OpBody, wire.OpPut, wire.OpDel, wire.OpBucketCreate, wire.OpBucketConfig, wire.OpBucketDelete}
+	known := []wire.OpType{wire.OpBody, wire.OpPut, wire.OpDel, wire.OpRegistry, wire.OpBucketCreate, wire.OpBucketConfig, wire.OpBucketDelete, wire.OpEncConfig}
 	for _, op := range known {
 		t.Run("known "+string(op), func(t *testing.T) {
 			if applier, ok := registry.Lookup(op); !ok || applier == nil {
