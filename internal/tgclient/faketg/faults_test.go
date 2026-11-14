@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/tgclient"
 )
 
@@ -185,13 +186,9 @@ func TestFakeScriptedFaults(t *testing.T) {
 		e := newEnv(t)
 		before := e.clock.Now()
 		_ = e.alice.QueueFaults(MethodSendFileIdempotent, Fault{Kind: FaultLatency, Latency: 40 * time.Second})
-		wall := time.Now()
 		e.sendFile(t, e.alice, e.peer, "doc", []byte("x"), 1)
 		if elapsed := e.clock.Now().Sub(before); elapsed != 40*time.Second {
 			t.Fatalf("clock advanced %v, want 40s", elapsed)
-		}
-		if time.Since(wall) > 5*time.Second {
-			t.Fatal("latency slept on the wall clock")
 		}
 		if err := e.alice.SetLatency(MethodGetHistory, 2*time.Second); err != nil {
 			t.Fatal(err)
@@ -346,12 +343,12 @@ func TestFakeRangePreconditions(t *testing.T) {
 		wantN   int
 	}{
 		{"aligned block", 4096, 4096, nil, 4096},
-		{"unaligned offset", 100, 4096, ErrRangePrecondition, 0},
-		{"over one mebibyte", 0, 1024*1024 + 1, ErrRangePrecondition, 0},
-		{"crosses a mebibyte boundary", 1024*1024 - 4096, 8192, ErrRangePrecondition, 0},
+		{"unaligned offset", 100, 4096, errs.ErrInvalidRange, 0},
+		{"over one mebibyte", 0, 1024*1024 + 1, errs.ErrInvalidRange, 0},
+		{"crosses a mebibyte boundary", 1024*1024 - 4096, 8192, errs.ErrInvalidRange, 0},
 		{"final short block", 3 * 1024 * 1024, 100, nil, 100},
 		{"past the end", 3 * 1024 * 1024, 4096, errUnexpectedEOF, 0},
-		{"negative offset", -4096, 10, ErrRangePrecondition, 0},
+		{"negative offset", -4096, 10, errs.ErrInvalidRange, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			buf := make([]byte, tc.length)

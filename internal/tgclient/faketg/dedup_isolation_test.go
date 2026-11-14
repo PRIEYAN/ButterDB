@@ -35,6 +35,74 @@ func TestFakeRandomIDDedup(t *testing.T) {
 		}
 	})
 
+	t.Run("sent file records name caption and size", func(t *testing.T) {
+		e := newEnv(t)
+		res := e.sendFile(t, e.alice, e.peer, "named", patternBytes(777), 8)
+		files := e.net.SentFiles(e.peer.ChannelID)
+		if len(files) != 1 {
+			t.Fatalf("recorded files = %d, want 1", len(files))
+		}
+		got := files[0]
+		if got.Name != "named" || got.Caption != "TDX1|t=body" || got.Size != 777 || got.MsgID != res.MsgID || got.RandomID != 8 {
+			t.Fatalf("sent file = %+v", got)
+		}
+	})
+
+	t.Run("body reader is fully consumed", func(t *testing.T) {
+		e := newEnv(t)
+		reader := bytesReader(patternBytes(900))
+		_, err := e.alice.SendFileIdempotent(ctx, tgclient.SendFileRequest{
+			Peer: e.peer, FileName: "b", Size: 900, Body: reader, RandomID: 31, Caption: "c",
+		})
+		if err != nil || reader.Len() != 0 {
+			t.Fatalf("send = %v, unread bytes = %d", err, reader.Len())
+		}
+	})
+
+	t.Run("pre-seeked body is a size mismatch", func(t *testing.T) {
+		e := newEnv(t)
+		reader := bytesReader(patternBytes(900))
+		if _, err := reader.Seek(100, 0); err != nil {
+			t.Fatal(err)
+		}
+		_, err := e.alice.SendFileIdempotent(ctx, tgclient.SendFileRequest{
+			Peer: e.peer, FileName: "b", Size: 900, Body: reader, RandomID: 32, Caption: "c",
+		})
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("error = %v, want ErrInvalidArgument", err)
+		}
+		if got := len(e.net.SentFiles(e.peer.ChannelID)); got != 0 {
+			t.Fatalf("recorded files = %d, want 0", got)
+		}
+	})
+
+	t.Run("empty control text file name and size are refused", func(t *testing.T) {
+		e := newEnv(t)
+		if _, err := e.alice.SendControlIdempotent(ctx, tgclient.SendControlRequest{Peer: e.peer, RandomID: 1}); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("empty text error = %v", err)
+		}
+		for name, req := range map[string]tgclient.SendFileRequest{
+			"empty file name": {Peer: e.peer, Size: 1, Body: bytesReader([]byte{1}), RandomID: 2},
+			"zero size":       {Peer: e.peer, FileName: "b", Body: bytesReader(nil), RandomID: 3},
+			"nil body":        {Peer: e.peer, FileName: "b", Size: 1, RandomID: 4},
+		} {
+			if _, err := e.alice.SendFileIdempotent(ctx, req); !errors.Is(err, ErrInvalidArgument) {
+				t.Fatalf("%s error = %v", name, err)
+			}
+		}
+	})
+
+	t.Run("empty saved message text is refused and channel about stays empty", func(t *testing.T) {
+		e := newEnv(t)
+		if _, err := e.alice.SendToSavedMessages(ctx, ""); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("error = %v", err)
+		}
+		owned, err := e.alice.ListOwnedChannels(ctx)
+		if err != nil || len(owned) != 1 || owned[0].About != "" {
+			t.Fatalf("owned = %+v, %v", owned, err)
+		}
+	})
+
 	t.Run("same random id in another channel is a new message", func(t *testing.T) {
 		other, err := e.alice.CreateChannel(ctx, "bucket-b", "")
 		if err != nil {
@@ -190,7 +258,7 @@ func TestFakePeerValidationOrder(t *testing.T) {
 		peer tgclient.InputPeer
 		want error
 	}{
-		{"zero hash wins over everything", tgclient.InputPeer{ChannelID: 0, AccessHash: 0}, tgclient.ErrZeroAccessHash},
+		{"non positive channel id wins over zero hash", tgclient.InputPeer{ChannelID: 0, AccessHash: 0}, tgclient.ErrChannelUnavailable},
 		{"zero hash on a real channel", tgclient.InputPeer{ChannelID: e.peer.ChannelID}, tgclient.ErrZeroAccessHash},
 		{"non positive channel id", tgclient.InputPeer{ChannelID: 0, AccessHash: 5}, tgclient.ErrChannelUnavailable},
 		{"unknown channel", tgclient.InputPeer{ChannelID: 999, AccessHash: 5}, tgclient.ErrChannelUnavailable},

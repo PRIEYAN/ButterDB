@@ -31,7 +31,6 @@ var (
 	ErrWriteForbidden     = errors.New("faketg: write forbidden")
 	ErrPhoneNumberInvalid = errors.New("faketg: phone number invalid")
 	ErrNoLoginScript      = errors.New("faketg: account has no login script")
-	ErrRangePrecondition  = errors.New("faketg: range precondition violated")
 	ErrInvalidFaultScript = errors.New("faketg: invalid fault script")
 	ErrDuplicateAccount   = errors.New("faketg: duplicate account")
 	ErrUnknownChannel     = errors.New("faketg: unknown channel")

@@ -12,7 +12,6 @@ type eventKind int
 
 const (
 	eventNew eventKind = iota + 1
-	eventEdit
 	eventDelete
 )
 
@@ -241,7 +240,6 @@ func (n *Network) EditMessageText(channelID, msgID int64, text string) error {
 			ch.sentControls[j].Text = text
 		}
 	}
-	ch.recordEvent(eventEdit, msgID, 0)
 	return nil
 }
 

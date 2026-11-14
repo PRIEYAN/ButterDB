@@ -15,6 +15,9 @@ func (c *Client) SendControlIdempotent(ctx context.Context, req tgclient.SendCon
 	if req.RandomID == 0 {
 		return 0, fmt.Errorf("faketg: %w: random id must be non-zero", ErrInvalidArgument)
 	}
+	if req.Text == "" {
+		return 0, fmt.Errorf("faketg: %w: control text is empty", ErrInvalidArgument)
+	}
 	fault, err := c.enter(ctx, MethodSendControlIdempotent, req.Peer.ChannelID)
 	if err != nil {
 		return 0, err
@@ -65,8 +68,11 @@ func (c *Client) SendFileIdempotent(ctx context.Context, req tgclient.SendFileRe
 	if req.RandomID == 0 {
 		return tgclient.SendFileResult{}, fmt.Errorf("faketg: %w: random id must be non-zero", ErrInvalidArgument)
 	}
-	if req.Body == nil || req.Size < 0 {
+	if req.Body == nil || req.Size <= 0 {
 		return tgclient.SendFileResult{}, fmt.Errorf("faketg: %w: body and size", ErrInvalidArgument)
+	}
+	if req.FileName == "" {
+		return tgclient.SendFileResult{}, fmt.Errorf("faketg: %w: file name is empty", ErrInvalidArgument)
 	}
 	fault, err := c.enter(ctx, MethodSendFileIdempotent, req.Peer.ChannelID)
 	if err != nil {
@@ -76,7 +82,7 @@ func (c *Client) SendFileIdempotent(ctx context.Context, req tgclient.SendFileRe
 	if err != nil {
 		return tgclient.SendFileResult{}, fmt.Errorf("faketg: read body: %w", err)
 	}
-	if req.Size > 0 && int64(len(body)) != req.Size {
+	if int64(len(body)) != req.Size {
 		return tgclient.SendFileResult{}, fmt.Errorf("faketg: %w: body is %d bytes, request declared %d", ErrInvalidArgument, len(body), req.Size)
 	}
 	if err := ctx.Err(); err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/tgclient"
 )
 
@@ -57,16 +58,16 @@ func (c *Client) resolveLocked(peer tgclient.InputPeer, msgID int64) (tgclient.D
 
 func checkRangePreconditions(offset int64, length int) error {
 	if offset < 0 {
-		return fmt.Errorf("faketg: %w: negative offset", ErrRangePrecondition)
+		return fmt.Errorf("faketg: %w: negative offset", errs.ErrInvalidRange)
 	}
 	if offset%rangeAlignment != 0 {
-		return fmt.Errorf("faketg: %w: offset %d is not %d-aligned", ErrRangePrecondition, offset, rangeAlignment)
+		return fmt.Errorf("faketg: %w: offset %d is not %d-aligned", errs.ErrInvalidRange, offset, rangeAlignment)
 	}
 	if length > rangeMaxBytes {
-		return fmt.Errorf("faketg: %w: length %d exceeds %d", ErrRangePrecondition, length, rangeMaxBytes)
+		return fmt.Errorf("faketg: %w: length %d exceeds %d", errs.ErrInvalidRange, length, rangeMaxBytes)
 	}
 	if offset/rangeMaxBytes != (offset+int64(length)-1)/rangeMaxBytes {
-		return fmt.Errorf("faketg: %w: range crosses a %d-byte boundary", ErrRangePrecondition, rangeMaxBytes)
+		return fmt.Errorf("faketg: %w: range crosses a %d-byte boundary", errs.ErrInvalidRange, rangeMaxBytes)
 	}
 	return nil
 }

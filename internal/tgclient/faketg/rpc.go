@@ -209,7 +209,7 @@ func (c *Client) ListOwnedChannels(ctx context.Context) ([]tgclient.Channel, err
 	var out []tgclient.Channel
 	for _, ch := range c.n.channels {
 		if ch.ownerID == c.userID {
-			out = append(out, tgclient.Channel{Peer: peerFor(ch.id, c.userID), Title: ch.title, About: ch.about})
+			out = append(out, tgclient.Channel{Peer: peerFor(ch.id, c.userID), Title: ch.title})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Peer.ChannelID < out[j].Peer.ChannelID })
@@ -239,6 +239,9 @@ func (c *Client) ResolveChannel(ctx context.Context, channelID int64) (tgclient.
 }
 
 func (c *Client) SendToSavedMessages(ctx context.Context, text string) (int64, error) {
+	if text == "" {
+		return 0, fmt.Errorf("faketg: %w: saved message text is empty", ErrInvalidArgument)
+	}
 	fault, err := c.enter(ctx, MethodSendToSavedMessages, 0)
 	if err != nil {
 		return 0, err

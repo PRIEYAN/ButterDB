@@ -70,16 +70,23 @@ func TestFakeDifferencePages(t *testing.T) {
 		}
 	})
 
-	t.Run("edit reappears with the current text", func(t *testing.T) {
+	t.Run("edit never surfaces in a difference", func(t *testing.T) {
 		e := newEnv(t)
 		id := e.sendControl(t, e.alice, e.peer, "original", 1)
 		current, _ := e.alice.GetChannelPts(ctx, e.peer)
 		if err := e.net.EditMessageText(e.peer.ChannelID, id, "tampered"); err != nil {
 			t.Fatal(err)
 		}
+		if after, _ := e.alice.GetChannelPts(ctx, e.peer); after != current {
+			t.Fatalf("pts after edit = %d, want %d", after, current)
+		}
 		diff, _ := e.alice.GetChannelDifference(ctx, e.peer, current, 10)
-		if len(diff.Messages) != 1 || diff.Messages[0].Text != "tampered" {
+		if !diff.Final || diff.Pts != current || len(diff.Messages) != 0 || len(diff.DeletedMessageIDs) != 0 {
 			t.Fatalf("difference = %+v", diff)
+		}
+		msgs, _ := e.alice.GetMessages(ctx, e.peer, []int64{id})
+		if len(msgs) != 1 || msgs[0].Text != "tampered" {
+			t.Fatalf("messages = %+v", msgs)
 		}
 	})
 

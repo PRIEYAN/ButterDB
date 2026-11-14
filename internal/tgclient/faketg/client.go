@@ -134,11 +134,11 @@ func (c *Client) requireAuthLocked() error {
 }
 
 func checkPeer(peer tgclient.InputPeer) error {
-	if peer.AccessHash == 0 {
-		return fmt.Errorf("faketg: channel %d: %w", peer.ChannelID, tgclient.ErrZeroAccessHash)
-	}
 	if peer.ChannelID <= 0 {
 		return fmt.Errorf("faketg: %w: channel id", tgclient.ErrChannelUnavailable)
+	}
+	if peer.AccessHash == 0 {
+		return fmt.Errorf("faketg: channel %d: %w", peer.ChannelID, tgclient.ErrZeroAccessHash)
 	}
 	return nil
 }
