@@ -271,3 +271,5 @@ func TestFloodWaitIsDefiniteAndTyped(t *testing.T) {
 		t.Fatalf("flood wait classified as unknown or retried in place: err=%v calls=%d", err, calls)
 	}
 }
+
+var _ tgclient.Sender = (*Sender)(nil)
