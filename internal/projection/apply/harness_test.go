@@ -3,6 +3,7 @@ package apply
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -103,13 +104,35 @@ func (e *env) apply(obs projection.Observed, op wire.Op) (projection.ApplyResult
 	var result projection.ApplyResult
 	var applyErr error
 	err := e.db.Write(context.Background(), func(tx *sql.Tx) error {
-		result, applyErr = applier.Apply(context.Background(), tx, projection.ApplyInput{Observed: obs, Op: op})
-		return nil
+		return e.applyInSavepoint(tx, applier, projection.ApplyInput{Observed: obs, Op: op}, &result, &applyErr)
 	})
 	if err != nil {
 		e.t.Fatalf("write: %v", err)
 	}
 	return result, applyErr
+}
+
+func keepsWritesAfter(err error) bool {
+	if err == nil {
+		return true
+	}
+	var reject *projection.Reject
+	return errors.As(err, &reject) && reject.Code == projection.RejectDuplicateOp
+}
+
+func (e *env) applyInSavepoint(tx *sql.Tx, applier projection.Applier, in projection.ApplyInput, result *projection.ApplyResult, applyErr *error) error {
+	ctx := context.Background()
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT projection_log_apply`); err != nil {
+		return err
+	}
+	*result, *applyErr = applier.Apply(ctx, tx, in)
+	if !keepsWritesAfter(*applyErr) {
+		if _, err := tx.ExecContext(ctx, `ROLLBACK TO projection_log_apply`); err != nil {
+			return err
+		}
+	}
+	_, err := tx.ExecContext(ctx, `RELEASE projection_log_apply`)
+	return err
 }
 
 func (e *env) mustApply(obs projection.Observed, op wire.Op, want projection.OutcomeKind) {
