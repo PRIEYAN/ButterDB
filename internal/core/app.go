@@ -29,6 +29,8 @@ type App struct {
 	cfg    config.Config
 	logger *slog.Logger
 	group  *lifecycle.Group
+	clock  clock.Clock
+	fsys   fsx.FS
 
 	mu   sync.Mutex
 	data *datadir.Dir
@@ -52,6 +54,8 @@ func New(deps Dependencies) (*App, error) {
 		cfg:    deps.Config,
 		logger: logging.New(deps.LogOutput, deps.Config.Log),
 		group:  lifecycle.NewGroup(deps.Config.Shutdown.ComponentTimeout.Std()),
+		clock:  deps.Clock,
+		fsys:   deps.FS,
 	}
 	app.group.Add("datadir", &dataDirComponent{app: app, fsys: deps.FS})
 	app.group.Add("processlock", &lockComponent{app: app, role: deps.Role, clock: deps.Clock})
