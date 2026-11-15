@@ -236,3 +236,85 @@ func TestDeferCleanupHugeAttemptCountStaysCapped(t *testing.T) {
 		t.Fatalf("next = %d, want the one hour cap", next)
 	}
 }
+
+func seedBody(t *testing.T, q *CleanupQueue, channelID, msgID int64, jobID string, msgDate int64) {
+	t.Helper()
+	err := q.db.Write(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), "INSERT INTO object_bodies (channel_id, msg_id, job_id, stored_size, encrypted, msg_date) VALUES (?1, ?2, ?3, 10, 0, ?4)", channelID, msgID, jobID, msgDate)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed body: %v", err)
+	}
+}
+
+func TestOrphanBodies(t *testing.T) {
+	q := newQueue(t)
+	live := sampleMeta(testChannel, "live", 11)
+	err := q.db.Write(context.Background(), func(tx *sql.Tx) error { return PutObject(context.Background(), tx, live, 1) })
+	if err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	seedBody(t, q, testChannel, 10, testJobID, 100)
+	seedBody(t, q, testChannel, 20, testJobID, 100)
+	seedBody(t, q, testChannel, 21, testJobID, 100)
+	seedBody(t, q, testChannel, 22, testJobID, 100)
+	seedBody(t, q, testChannel, 23, testJobID, 5000)
+	seedBody(t, q, testChannel+1, 20, testJobID, 100)
+	queueIDs(t, q, testChannel, 21)
+	if err := q.ConfirmCleanupDeleted(context.Background(), testChannel, []int64{22}, 1); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	tests := []struct {
+		name    string
+		channel int64
+		before  int64
+		after   int64
+		limit   int
+		want    []int64
+	}{
+		{"only unreferenced unqueued old bodies", testChannel, 1000, 0, 10, []int64{20}},
+		{"cursor skips earlier ids", testChannel, 1000, 20, 10, nil},
+		{"grace excludes young bodies", testChannel, 99, 0, 10, nil},
+		{"young body listed once old enough", testChannel, 5000, 20, 10, []int64{23}},
+		{"other channel independent", testChannel + 1, 1000, 0, 10, []int64{20}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, jobs, err := q.OrphanBodies(context.Background(), tt.channel, tt.before, tt.after, tt.limit)
+			if err != nil {
+				t.Fatalf("orphan bodies: %v", err)
+			}
+			if !reflect.DeepEqual(got, tt.want) || len(jobs) != len(got) {
+				t.Fatalf("bodies = %v jobs = %v, want %v", got, jobs, tt.want)
+			}
+		})
+	}
+	channels, err := q.BodyChannels(context.Background())
+	if err != nil || !reflect.DeepEqual(channels, []int64{testChannel, testChannel + 1}) {
+		t.Fatalf("body channels = %v, %v", channels, err)
+	}
+}
+
+func TestQueueOrphanBodies(t *testing.T) {
+	q := newQueue(t)
+	live := sampleMeta(testChannel, "live", 11)
+	err := q.db.Write(context.Background(), func(tx *sql.Tx) error { return PutObject(context.Background(), tx, live, 1) })
+	if err != nil {
+		t.Fatalf("seed object: %v", err)
+	}
+	if err := q.ConfirmCleanupDeleted(context.Background(), testChannel, []int64{5}, 1); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	queued, err := q.QueueOrphanBodies(context.Background(), testChannel, []int64{10, 5, 7, 7})
+	if err != nil || queued != 1 {
+		t.Fatalf("queued = %d, %v; want only message 7", queued, err)
+	}
+	var reason string
+	err = q.db.Read(context.Background(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), "SELECT reason FROM pending_message_cleanup WHERE channel_id = ?1 AND msg_id = 7", testChannel).Scan(&reason)
+	})
+	if err != nil || reason != "orphan_body" {
+		t.Fatalf("reason = %q, %v", reason, err)
+	}
+}

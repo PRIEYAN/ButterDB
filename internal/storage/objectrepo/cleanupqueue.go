@@ -137,3 +137,88 @@ func (q *CleanupQueue) DeferCleanup(ctx context.Context, channelID int64, msgIDs
 	}
 	return nil
 }
+
+func (q *CleanupQueue) BodyChannels(ctx context.Context) ([]int64, error) {
+	var channels []int64
+	err := q.db.Read(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT DISTINCT channel_id FROM object_bodies ORDER BY channel_id")
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var channelID int64
+			if err := rows.Scan(&channelID); err != nil {
+				return err
+			}
+			channels = append(channels, channelID)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("objectrepo: body channels: %w", err)
+	}
+	return channels, nil
+}
+
+const selectUnreferencedBodies = `SELECT b.msg_id, b.job_id FROM object_bodies b
+WHERE b.channel_id = ?1 AND b.msg_date <= ?2 AND b.msg_id > ?3
+  AND NOT EXISTS (SELECT 1 FROM objects o WHERE o.channel_id = b.channel_id AND o.body_msg_id = b.msg_id)
+  AND NOT EXISTS (SELECT 1 FROM pending_message_cleanup p WHERE p.channel_id = b.channel_id AND p.msg_id = b.msg_id)
+  AND NOT EXISTS (SELECT 1 FROM deleted_messages d WHERE d.channel_id = b.channel_id AND d.msg_id = b.msg_id)
+ORDER BY b.msg_id LIMIT ?4`
+
+func (q *CleanupQueue) OrphanBodies(ctx context.Context, channelID, olderThanUnix, afterMsgID int64, limit int) ([]int64, []string, error) {
+	var msgIDs []int64
+	var jobIDs []string
+	err := q.db.Read(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, selectUnreferencedBodies, channelID, olderThanUnix, afterMsgID, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var msgID int64
+			var jobID string
+			if err := rows.Scan(&msgID, &jobID); err != nil {
+				return err
+			}
+			msgIDs = append(msgIDs, msgID)
+			jobIDs = append(jobIDs, jobID)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("objectrepo: orphan bodies of channel %d: %w", channelID, err)
+	}
+	return msgIDs, jobIDs, nil
+}
+
+const queueOrphanBody = `INSERT INTO pending_message_cleanup (channel_id, msg_id, reason, queued_by_msg_id)
+SELECT ?1, ?2, 'orphan_body', 0
+WHERE NOT EXISTS (SELECT 1 FROM objects WHERE channel_id = ?1 AND (put_msg_id = ?2 OR body_msg_id = ?2))
+  AND NOT EXISTS (SELECT 1 FROM deleted_messages WHERE channel_id = ?1 AND msg_id = ?2)
+ON CONFLICT (channel_id, msg_id) DO NOTHING`
+
+func (q *CleanupQueue) QueueOrphanBodies(ctx context.Context, channelID int64, msgIDs []int64) (int, error) {
+	queued := 0
+	err := q.db.Write(ctx, func(tx *sql.Tx) error {
+		queued = 0
+		for _, msgID := range msgIDs {
+			result, err := tx.ExecContext(ctx, queueOrphanBody, channelID, msgID)
+			if err != nil {
+				return err
+			}
+			inserted, err := result.RowsAffected()
+			if err != nil {
+				return err
+			}
+			queued += int(inserted)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("objectrepo: queue orphan bodies of channel %d: %w", channelID, err)
+	}
+	return queued, nil
+}
