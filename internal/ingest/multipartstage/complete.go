@@ -218,13 +218,17 @@ func (s *Stage) assemble(ctx context.Context, upload jobrepo.MultipartUpload, pl
 	if err != nil {
 		return object.ObjectMeta{}, s.afterPutFailure(ctx, upload.UploadID, err)
 	}
-	body := newConcatReader(ctx, s, upload.UploadID, plan.parts)
-	defer body.Close()
-	meta, err := s.deps.Putter.PutMultipart(ctx, req, body, upload.UploadID, jobID)
+	etag, err := object.MultipartETag(plan.md5s)
 	if err != nil {
 		return object.ObjectMeta{}, s.afterPutFailure(ctx, upload.UploadID, err)
 	}
-	return s.finishCompleted(ctx, upload.UploadID, plan, meta, jobID, listHash)
+	body := newConcatReader(ctx, s, upload.UploadID, plan.parts)
+	defer body.Close()
+	meta, err := s.deps.Putter.PutMultipart(ctx, req, body, upload.UploadID, jobID, etag)
+	if err != nil {
+		return object.ObjectMeta{}, s.afterPutFailure(ctx, upload.UploadID, err)
+	}
+	return s.finishCompleted(ctx, upload.UploadID, meta, jobID, etag, listHash)
 }
 
 func putRequestFor(upload jobrepo.MultipartUpload, plan completePlan, cond Conditions) (object.PutRequest, error) {
@@ -254,11 +258,7 @@ func putRequestFor(upload jobrepo.MultipartUpload, plan completePlan, cond Condi
 	}, nil
 }
 
-func (s *Stage) finishCompleted(ctx context.Context, uploadID string, plan completePlan, meta object.ObjectMeta, jobID, listHash string) (object.ObjectMeta, error) {
-	etag, err := object.MultipartETag(plan.md5s)
-	if err != nil {
-		return object.ObjectMeta{}, fmt.Errorf("multipartstage: complete: %w", err)
-	}
+func (s *Stage) finishCompleted(ctx context.Context, uploadID string, meta object.ObjectMeta, jobID, etag, listHash string) (object.ObjectMeta, error) {
 	completedAt := s.deps.Clock.Now().UnixMilli()
 	patch := jobrepo.MultipartPatch{ETag: &etag, PutMsgID: &meta.PutMsgID, PartListSHA256: &listHash, CompletedAt: &completedAt}
 	settle := context.WithoutCancel(ctx)

@@ -95,6 +95,9 @@ func TestCompleteMultipartETag(t *testing.T) {
 	if meta.ETag != want {
 		t.Fatalf("etag = %s, want %s", meta.ETag, want)
 	}
+	if got := h.putter.calls[0].etag; got != want {
+		t.Fatalf("etag passed to put = %s, want %s", got, want)
+	}
 	row, err := h.real.GetUpload(context.Background(), upload.ID)
 	if err != nil || row.ETag != want {
 		t.Fatalf("stored etag = %q err=%v", row.ETag, err)

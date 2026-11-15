@@ -79,7 +79,7 @@ type Index interface {
 }
 
 type Putter interface {
-	PutMultipart(ctx context.Context, req object.PutRequest, body io.Reader, uploadID, jobID string) (object.ObjectMeta, error)
+	PutMultipart(ctx context.Context, req object.PutRequest, body io.Reader, uploadID, jobID, etag string) (object.ObjectMeta, error)
 }
 
 type Dependencies struct {

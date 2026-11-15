@@ -148,6 +148,7 @@ type putCall struct {
 	body     []byte
 	uploadID string
 	jobID    string
+	etag     string
 	busy     bool
 }
 
@@ -161,7 +162,7 @@ type fakePutter struct {
 	release chan struct{}
 }
 
-func (p *fakePutter) PutMultipart(_ context.Context, req object.PutRequest, body io.Reader, uploadID, jobID string) (object.ObjectMeta, error) {
+func (p *fakePutter) PutMultipart(_ context.Context, req object.PutRequest, body io.Reader, uploadID, jobID, etag string) (object.ObjectMeta, error) {
 	busy := p.index != nil && p.index.active.Load() != 0
 	if p.started != nil {
 		p.started <- struct{}{}
@@ -170,7 +171,7 @@ func (p *fakePutter) PutMultipart(_ context.Context, req object.PutRequest, body
 	data, readErr := io.ReadAll(body)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.calls = append(p.calls, putCall{req: req, body: data, uploadID: uploadID, jobID: jobID, busy: busy})
+	p.calls = append(p.calls, putCall{req: req, body: data, uploadID: uploadID, jobID: jobID, etag: etag, busy: busy})
 	if readErr != nil {
 		return object.ObjectMeta{}, readErr
 	}
