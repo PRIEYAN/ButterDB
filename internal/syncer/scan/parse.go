@@ -14,10 +14,10 @@ type ParsedMessage struct {
 	Observed projection.Observed
 }
 
-// Unknown ops and malformed headers are kept: the projector records them as rejects so a newer binary can apply them (E5).
 func ParseHistoryPage(channelID int64, msgs []tgclient.HistoryMessage) []ParsedMessage {
 	out := make([]ParsedMessage, 0, len(msgs))
 	for _, m := range msgs {
+		// Only headerless messages are skipped: unknown and malformed ops reach the projector as rejects (E5).
 		if !wire.HasPrefix(m.Text) {
 			continue
 		}

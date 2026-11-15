@@ -153,8 +153,8 @@ func (s *Scanner) EnsureAllAuthoritative(ctx context.Context) error {
 	return s.ensureBuckets(ctx)
 }
 
-// Buckets are listed again because the registry scan is what discovers them.
 func (s *Scanner) ensureBuckets(ctx context.Context) error {
+	// Buckets are listed again because the registry scan is what discovers them.
 	channels, err := s.channels.Channels(ctx)
 	if err != nil {
 		return fmt.Errorf("scan: list channels: %w", err)

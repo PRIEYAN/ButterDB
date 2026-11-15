@@ -2,6 +2,7 @@ package scan
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"golang.org/x/sync/semaphore"
@@ -23,14 +24,14 @@ func NewGate() *Gate {
 func (g *Gate) Acquire(ctx context.Context, channelID int64) (func(), error) {
 	lock := g.lockFor(channelID)
 	if err := lock.Acquire(ctx, 1); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan: acquire channel %d: %w", channelID, err)
 	}
 	var once sync.Once
 	return func() { once.Do(func() { lock.Release(1) }) }, nil
 }
 
-// A gate is kept for the process lifetime: dropping one while callers hold its pointer would admit two scans into one channel.
 func (g *Gate) lockFor(channelID int64) *semaphore.Weighted {
+	// A gate is kept for the process lifetime: dropping one while callers hold its pointer would admit two scans into one channel.
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if lock, ok := g.locks[channelID]; ok {

@@ -31,8 +31,8 @@ func (p *probingHistory) GetHistory(ctx context.Context, peer tgclient.InputPeer
 	return p.HistoryReader.GetHistory(ctx, peer, offsetID, limit)
 }
 
-// A write that cannot start within the timeout means the scan holds the single writer across this network call.
 func (p *probingHistory) probe() {
+	// A write that cannot start within the timeout means the scan holds the single writer across this network call.
 	probeCtx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 	p.probes++

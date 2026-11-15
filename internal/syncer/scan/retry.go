@@ -71,8 +71,8 @@ func floodWaitOf(err error) (time.Duration, bool) {
 	return 0, false
 }
 
-// gotd cancels its own internal contexts when its engine dies, so a shutdown wraps context.Canceled while the caller's context is still alive.
 func isTransientTransport(err error) bool {
+	// gotd cancels its own internal contexts when its engine dies, so a shutdown wraps context.Canceled while the caller's context is still alive.
 	if err == nil {
 		return false
 	}
@@ -164,8 +164,8 @@ func (s *Scanner) getHistory(ctx context.Context, channelID int64, peer tgclient
 	return page, err
 }
 
-// A pts that cannot be sampled still leaves history scanning viable, so only caller cancellation is reported.
 func (s *Scanner) samplePts(ctx context.Context, channelID int64, peer tgclient.InputPeer) (int, error) {
+	// A pts that cannot be sampled still leaves history scanning viable, so only caller cancellation is reported.
 	var pts int
 	err := s.readWithRetry(ctx, channelID, "pts read", func() error {
 		var err error

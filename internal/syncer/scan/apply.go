@@ -123,8 +123,8 @@ func (s *Scanner) ingestMessages(ctx context.Context, tx *sql.Tx, channelID int6
 	return nil
 }
 
-// Ops banked while the objects they target were unread were skipped again above, so only replaying the completed log lands them.
 func (s *Scanner) rebuildAfterScan(ctx context.Context, tx *sql.Tx, state syncer.ChannelState) error {
+	// Ops banked while the objects they target were unread were skipped again above, so only replaying the completed log lands them.
 	var result rebuild.Result
 	var err error
 	if state.Kind == syncer.KindRegistry {
