@@ -116,10 +116,12 @@ func NewHandlers(deps Dependencies) (*Handlers, error) {
 
 func (h *Handlers) Routes() map[router.Operation]router.HandlerFunc {
 	return map[router.Operation]router.HandlerFunc{
-		router.OpPutObject:    h.PutObject,
-		router.OpGetObject:    h.GetObject,
-		router.OpHeadObject:   h.HeadObject,
-		router.OpDeleteObject: h.DeleteObject,
+		router.OpPutObject:     h.PutObject,
+		router.OpGetObject:     h.GetObject,
+		router.OpHeadObject:    h.HeadObject,
+		router.OpDeleteObject:  h.DeleteObject,
+		router.OpDeleteObjects: h.DeleteObjects,
+		router.OpCopyObject:    h.CopyObject,
 	}
 }
 

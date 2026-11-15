@@ -64,15 +64,20 @@ func (r *deadlineRecorder) SetReadDeadline(deadline time.Time) error {
 }
 
 type fakeEvaluator struct {
-	infos map[bucket.BucketName]bucket.Info
-	calls []access.Action
-	mu    sync.Mutex
+	infos   map[bucket.BucketName]bucket.Info
+	calls   []access.Action
+	denyNth int
+	mu      sync.Mutex
 }
 
 func (f *fakeEvaluator) Authorize(_ context.Context, p policy.Principal, b bucket.BucketName, a access.Action) (bucket.Info, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, a)
+	denied := f.denyNth != 0 && len(f.calls) == f.denyNth
 	f.mu.Unlock()
+	if denied {
+		return bucket.Info{}, errs.ErrAccessDenied
+	}
 	if !p.Key.Scope.CoversBucket(string(b)) || !p.Key.Scope.HasAction(a) {
 		return bucket.Info{}, errs.ErrAccessDenied
 	}
