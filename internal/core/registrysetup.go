@@ -16,7 +16,6 @@ import (
 	"github.com/PRIEYAN/ButterDB/internal/platform/secretfile"
 	"github.com/PRIEYAN/ButterDB/internal/storage/channelrepo"
 	"github.com/PRIEYAN/ButterDB/internal/storage/sqlitedb"
-	"github.com/PRIEYAN/ButterDB/internal/syncer"
 	"github.com/PRIEYAN/ButterDB/internal/syncer/livesync"
 	"github.com/PRIEYAN/ButterDB/internal/syncer/reconcile"
 	"github.com/PRIEYAN/ButterDB/internal/tgclient"
@@ -228,9 +227,8 @@ func (r *registrySetup) adopt(ctx context.Context, adoption reconcile.Adoption) 
 	if err != nil {
 		return RegistryOutcome{}, err
 	}
-	row := syncer.ChannelState{ChannelID: adoption.RegistryChannelID, AccessHash: adoption.RegistryAccessHash, Kind: syncer.KindRegistry}
-	if err := stores.UpsertChannel(ctx, row); err != nil {
-		return RegistryOutcome{}, fmt.Errorf("core: registry setup: record registry channel: %w", err)
+	if err := recordRegistryChannel(ctx, stores, adoption.RegistryChannelID, adoption.RegistryAccessHash); err != nil {
+		return RegistryOutcome{}, fmt.Errorf("core: registry setup: %w", err)
 	}
 	err = r.state.SaveRegistryState(ctx, buckets.RegistryState{
 		ChannelID:      adoption.RegistryChannelID,

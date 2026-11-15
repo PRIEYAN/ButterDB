@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +23,8 @@ import (
 	"github.com/PRIEYAN/ButterDB/internal/tgclient/flow"
 	"github.com/PRIEYAN/ButterDB/internal/tgclient/send"
 )
+
+const registryChannelTitle = "butterDB registry"
 
 type SyncDependencies struct {
 	Database     *sqlitedb.DB
@@ -241,6 +244,18 @@ func validateSyncDependencies(deps SyncDependencies) error {
 	}
 	if missing != "" {
 		return fmt.Errorf("core: sync: %w: %s", errs.ErrMissingDependency, missing)
+	}
+	return nil
+}
+
+func (s *Sync) RecordRegistry(ctx context.Context, state buckets.RegistryState) error {
+	return recordRegistryChannel(ctx, s.Channels, state.ChannelID, state.AccessHash)
+}
+
+func recordRegistryChannel(ctx context.Context, channels syncer.ChannelStore, channelID, accessHash int64) error {
+	row := syncer.ChannelState{ChannelID: channelID, AccessHash: accessHash, Kind: syncer.KindRegistry, Title: registryChannelTitle}
+	if err := channels.UpsertChannel(ctx, row); err != nil {
+		return fmt.Errorf("core: record registry channel %d: %w", channelID, err)
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/PRIEYAN/ButterDB/internal/buckets"
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/platform/secretfile"
+	"github.com/PRIEYAN/ButterDB/internal/storage/sqlitedb"
 )
 
 const (
@@ -57,6 +59,17 @@ func newRegistryStateFile(path string, writer *secretfile.Writer, deployment dep
 		return nil, fmt.Errorf("core: registry state: %w: deployment source", errs.ErrMissingDependency)
 	}
 	return &registryStateFile{path: path, writer: writer, deployment: deployment}, nil
+}
+
+func NewRegistryStateStore(path string, writer *secretfile.Writer, control *sqlitedb.DB, random io.Reader) (buckets.RegistryStateStore, error) {
+	if control == nil {
+		return nil, fmt.Errorf("core: registry state: %w: control database", errs.ErrMissingDependency)
+	}
+	meta, err := newAdminMeta(control, random)
+	if err != nil {
+		return nil, err
+	}
+	return newRegistryStateFile(path, writer, meta)
 }
 
 func (f *registryStateFile) LoadRegistryState(ctx context.Context) (buckets.RegistryState, bool, error) {
