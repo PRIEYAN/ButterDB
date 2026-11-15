@@ -100,7 +100,7 @@ that lands in two destinations has one row per destination.
 | `backend/crypto/stream.go` (`EncryptStream`, `DecryptStream`, subkey derivation) | `internal/crypto/stream` | ported | 03 | ported ce83399 |
 | `backend/crypto/random_access.go` | `internal/crypto/randomaccess` | ported | 03 | ported bb20600 |
 | `backend/crypto/vault.go` (key wrap and key check only; Argon2id and the passphrase vault are not ported) | `internal/crypto/keyring` | ported | 03 | ported d447325 |
-| `backend/projection/errors.go` | `internal/ingest/put` | ported | 03 (lands in 06) | planned |
+| `backend/projection/errors.go` | `internal/ingest/put` | ported | 03 (lands in 06) | ported dd7c636 |
 | `backend/tgclient/client.go` | `internal/tgclient` | ported | 04 | ported d62c211 |
 | `backend/tgclient/range.go` | `internal/tgclient` | ported | 04 | ported d62c211 |
 | `backend/tgclient/session.go` | `internal/tgclient/conn` | ported | 04 | ported 262a9e6 |
@@ -130,11 +130,11 @@ that lands in two destinations has one row per destination.
 | `backend/livesync/coordinator.go` | `internal/syncer/livesync` | ported | 05 | ported 39cbec0 |
 | `backend/livesync/activity.go` (`TelegramActivity`, `Signals`) | `internal/syncer/livesync` | ported | 05 | ported 262a9e6 (landed in `internal/tgclient/conn` in phase 04; `internal/syncer/livesync` consumes it through a `SignalSource` port) |
 | `backend/projection/channels.go` | `internal/storage/channelrepo` | ported | 05 | ported c98a591, 2c8e952 |
-| `backend/mountwrite/staging.go` | `internal/ingest/spool` | ported | 06 | planned |
-| `backend/mountwrite/locks.go` | `internal/ingest/put` | ported | 06 | planned |
-| `backend/services/file/hidden_upload.go` | `internal/ingest/put` | ported | 06 | planned |
-| `backend/core/engine.go` (`EmitAndProjectContext`, `sendControlWithRetry`, `controlPeer`) | `internal/ingest/put` | ported | 06 | planned |
-| `backend/services/file/upload.go` (`deleteMessagesChunked`) | `internal/ingest/remove` | ported | 06 | planned |
+| `backend/mountwrite/staging.go` | `internal/ingest/spool` | ported | 06 | ported 63c5665 |
+| `backend/mountwrite/locks.go` | `internal/ingest/put` | ported | 06 | ported dd7c636 |
+| `backend/services/file/hidden_upload.go` | `internal/ingest/put` | ported | 06 | ported dd7c636 |
+| `backend/core/engine.go` (`EmitAndProjectContext`, `sendControlWithRetry`, `controlPeer`) | `internal/ingest/put` | ported | 06 | ported a8df612 |
+| `backend/services/file/upload.go` (`deleteMessagesChunked`) | `internal/ingest/remove` | ported | 06 | ported 3c0a999 |
 | `backend/media/range_reader.go` | `internal/readpath/rangereader` | ported | 07 | planned |
 | `backend/media/cache.go` | `internal/readpath/rangereader` | ported | 07 | planned |
 | `backend/media/server.go` (range parsing and range responses) | `internal/readpath/httprange` | ported | 07 | planned |
@@ -169,16 +169,16 @@ that lands in two destinations has one row per destination.
 | `backend/services/personaldrive/service.go` | `internal/buckets`, `internal/syncer/reconcile` | design reference | 05 | referenced 3b00024, 95ba346 (pattern only, no code copied) |
 | `backend/services/lifecycle/service.go` | `internal/buckets` | design reference | 05 | referenced 3b00024 (pattern only, no code copied) |
 | `backend/services/encryption/service.go` | `internal/buckets` | design reference | 05 | referenced 3b00024 (pattern only, no code copied) |
-| `backend/mountadapter/remote.go` | `internal/ingest/put` | design reference | 06 | planned |
-| `backend/mountwrite/coordinator.go` | `internal/ingest/put` | design reference | 06 | planned |
-| `backend/mountwrite/journal.go`, `types.go` | `internal/storage/jobrepo` | design reference | 06 | planned |
-| `backend/mountwrite/recovery.go` | `internal/ingest/sweeper` | design reference | 06 | planned |
-| `backend/mountwrite/hard_delete.go`, `journal_hard_delete.go` | `internal/ingest/remove`, `internal/storage/jobrepo` | design reference | 06 | planned |
-| `backend/projection/hard_delete.go`, `hard_delete_intent.go` | `internal/ingest/remove` | design reference | 06 | planned |
-| `backend/projection/multipart.go` (part cleanup queue) | `internal/ingest/sweeper` | design reference | 06 | planned |
-| `backend/services/file/mutations.go` | `internal/ingest/remove`, `internal/ingest/sweeper` | design reference | 06 | planned |
-| `backend/services/file/service.go` | `internal/ingest/admission`, `internal/ingest/spool` | design reference | 06 | planned |
-| `backend/services/file/upload_failures.go` | `internal/ingest/put`, `internal/s3api/s3err` | design reference | 06, 08 | planned |
+| `backend/mountadapter/remote.go` | `internal/ingest/put` | design reference | 06 | referenced dd7c636, a8df612 |
+| `backend/mountwrite/coordinator.go` | `internal/ingest/put` | design reference | 06 | referenced dd7c636, a8df612 |
+| `backend/mountwrite/journal.go`, `types.go` | `internal/storage/jobrepo` | design reference | 06 | referenced e86e985 |
+| `backend/mountwrite/recovery.go` | `internal/ingest/sweeper` | design reference | 06 | referenced 74c4f17 |
+| `backend/mountwrite/hard_delete.go`, `journal_hard_delete.go` | `internal/ingest/remove`, `internal/storage/jobrepo` | design reference | 06 | referenced 3c0a999, e86e985 |
+| `backend/projection/hard_delete.go`, `hard_delete_intent.go` | `internal/ingest/remove` | design reference | 06 | referenced 3c0a999 |
+| `backend/projection/multipart.go` (part cleanup queue) | `internal/ingest/sweeper` | design reference | 06 | referenced bf1d9d7, 74c4f17 (the queue itself landed in `internal/storage/objectrepo`) |
+| `backend/services/file/mutations.go` | `internal/ingest/remove`, `internal/ingest/sweeper` | design reference | 06 | referenced 3c0a999, b49af86, 74c4f17 |
+| `backend/services/file/service.go` | `internal/ingest/admission`, `internal/ingest/spool` | design reference | 06 | referenced 8ce0972, 63c5665 |
+| `backend/services/file/upload_failures.go` | `internal/ingest/put`, `internal/s3api/s3err` | design reference | 06, 08 | referenced dd7c636 for put; s3err planned in 08 |
 | `backend/mountadapter/conditions.go` | `internal/readpath/httprange` | design reference | 07 | planned |
 | `backend/thumbnail/cache.go` | `internal/readpath/blockcache`, `internal/mediaapi/derivcache` | design reference | 07, 13 | planned |
 | `backend/media/resolver.go`, `service.go`, `types.go` | `internal/readpath/objectreader` | design reference | 07 | planned |
