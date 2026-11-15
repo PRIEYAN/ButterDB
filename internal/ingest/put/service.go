@@ -11,3 +11,5 @@ func New(deps Dependencies) (*Putter, error) {
 	}
 	return &Putter{deps: deps, locker: NewKeyedLocker()}, nil
 }
+
+var _ Service = (*Putter)(nil)

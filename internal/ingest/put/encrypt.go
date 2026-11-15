@@ -12,3 +12,10 @@ import (
 func (s *Putter) openEncrypted(_ context.Context, job jobrepo.UploadJob, _ io.ReadSeekCloser) (io.ReadSeeker, func(), error) {
 	return nil, nil, fmt.Errorf("put: job %s: encrypted bodies: %w", job.JobID, errs.ErrNotImplemented)
 }
+
+func (s *Putter) encryptionParamsFor(_ context.Context, res resolved) (*encryptionParams, error) {
+	if res.encrypted {
+		return nil, fmt.Errorf("put: encrypted objects: %w", errs.ErrNotImplemented)
+	}
+	return nil, nil
+}

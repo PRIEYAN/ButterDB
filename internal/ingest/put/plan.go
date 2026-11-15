@@ -129,12 +129,12 @@ func normalizeETag(value string) string {
 }
 
 func resolveEncryption(requested string, bucketDefault string) (bool, error) {
-	switch strings.ToLower(requested) {
+	switch requested {
 	case "":
 		return bucketDefault == bucket.EncryptionTDE1, nil
-	case "none":
+	case bucket.EncryptionNone:
 		return false, nil
-	case "tde1", "aes256":
+	case bucket.EncryptionTDE1:
 		return true, nil
 	}
 	return false, fmt.Errorf("put: %w: encryption %q", ErrInvalidRequest, requested)
