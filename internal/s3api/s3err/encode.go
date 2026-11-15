@@ -37,6 +37,9 @@ func resourceOf(e APIError) string {
 	if e.BucketName == "" {
 		return ""
 	}
+	if e.Key == "" {
+		return "/" + e.BucketName
+	}
 	return "/" + e.BucketName + "/" + e.Key
 }
 

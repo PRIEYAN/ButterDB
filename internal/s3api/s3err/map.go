@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/PRIEYAN/ButterDB/internal/domain/bucket"
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/domain/limits"
 	"github.com/PRIEYAN/ButterDB/internal/domain/object"
@@ -85,6 +86,8 @@ func mapLocalSentinel(err error) (APIError, bool) {
 		return New(CodeMissingRequestBodyError, ""), true
 	case errors.Is(err, xmlcodec.ErrMalformed), errors.Is(err, xmlcodec.ErrDoctype):
 		return New(CodeMalformedXML, ""), true
+	case errors.Is(err, bucket.ErrInvalidBucketName):
+		return New(CodeInvalidBucketName, ""), true
 	case errors.Is(err, object.ErrKeyTooLong):
 		return New(CodeKeyTooLongError, ""), true
 	case errors.Is(err, object.ErrMetadataTooLarge):

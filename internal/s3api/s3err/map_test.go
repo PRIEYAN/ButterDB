@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/PRIEYAN/ButterDB/internal/access/sigv4"
+	"github.com/PRIEYAN/ButterDB/internal/domain/bucket"
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/domain/object"
 	"github.com/PRIEYAN/ButterDB/internal/ingest/admission"
@@ -160,6 +161,7 @@ func TestMapTypedAndLocalErrors(t *testing.T) {
 		{"key too long", fmt.Errorf("object: key: %w: %w", object.ErrInvalidKey, object.ErrKeyTooLong), CodeKeyTooLongError, 400, 0, nil},
 		{"key control character", fmt.Errorf("object: key: %w: %w", object.ErrInvalidKey, object.ErrKeyControlCharacter), CodeInvalidArgument, 400, 0, nil},
 		{"metadata too large", object.ErrMetadataTooLarge, CodeMetadataTooLarge, 400, 0, nil},
+		{"domain bucket name", fmt.Errorf("bucket: name: %w: x", bucket.ErrInvalidBucketName), CodeInvalidBucketName, 400, 0, nil},
 		{"spool length mismatch", spool.ErrLengthMismatch, CodeIncompleteBody, 400, 0, nil},
 		{"put job aborted is internal", put.ErrJobAborted, CodeInternalError, 500, 0, nil},
 		{"control projection failure is internal", put.ErrControlProjection, CodeInternalError, 500, 0, nil},
