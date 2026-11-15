@@ -203,6 +203,9 @@ func isCommonPrefix(params listParams, marker string) bool {
 		return false
 	}
 	rest := marker[len(params.prefix):]
+	if len(rest) < len(params.delimiter) || !strings.HasSuffix(rest, params.delimiter) {
+		return false
+	}
 	return strings.Index(rest, params.delimiter) == len(rest)-len(params.delimiter)
 }
 

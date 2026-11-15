@@ -353,6 +353,23 @@ func TestV1MarkerSemantics(t *testing.T) {
 			t.Fatalf("keys = %v prefixes = %v", doc.keys(), doc.prefixes())
 		}
 	})
+	t.Run("marker equal to the prefix lists the keys under it", func(t *testing.T) {
+		doc := decodeList(t, f.listV1(t, "prefix=photos%2F&delimiter=%2F&marker=photos%2F"))
+		if !equalStrings(doc.keys(), []string{"photos/cover.jpg"}) || !equalStrings(doc.prefixes(), []string{"photos/2026/"}) {
+			t.Fatalf("keys = %v prefixes = %v", doc.keys(), doc.prefixes())
+		}
+	})
+	t.Run("marker shorter than a multi character delimiter is a plain key", func(t *testing.T) {
+		multi := newFixture(t, newMemoryLister("p/a", "p/b", "p/c--d", "p/e"))
+		doc := decodeList(t, multi.listV1(t, "prefix=p%2F&delimiter=--&marker=p%2F"))
+		if !equalStrings(doc.keys(), []string{"p/a", "p/b", "p/e"}) || !equalStrings(doc.prefixes(), []string{"p/c--"}) {
+			t.Fatalf("keys = %v prefixes = %v", doc.keys(), doc.prefixes())
+		}
+		call := multi.lister.calls[len(multi.lister.calls)-1]
+		if call.StartAfter != "p/" || call.ContinuationToken != "" {
+			t.Fatalf("lister query = %+v", call)
+		}
+	})
 	t.Run("a marker that is not a common prefix is a plain key", func(t *testing.T) {
 		doc := decodeList(t, f.listV1(t, "marker=photos%2F"))
 		if !equalStrings(doc.keys(), []string{"photos/2026/a.jpg", "photos/2026/b.jpg", "photos/cover.jpg", "z.txt"}) {
