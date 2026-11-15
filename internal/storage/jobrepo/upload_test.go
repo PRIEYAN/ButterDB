@@ -2,6 +2,7 @@ package jobrepo
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -309,6 +310,51 @@ func TestEncryptedJobNeedsSaltAndNonce(t *testing.T) {
 			}
 		})
 	}
+	rawTests := []struct {
+		name string
+		job  UploadJob
+		ok   bool
+	}{
+		{"table check accepts 16 byte salt and 20 byte prefix", withSalt([]byte(strings.Repeat("s", 16)), []byte(strings.Repeat("n", 20))), true},
+		{"table check refuses 15 byte salt", withSalt([]byte(strings.Repeat("s", 15)), []byte(strings.Repeat("n", 20))), false},
+		{"table check refuses 21 byte prefix", withSalt([]byte(strings.Repeat("s", 16)), []byte(strings.Repeat("n", 21))), false},
+		{"table check refuses unencrypted row carrying a salt", plainWithSalt, false},
+	}
+	for i, tt := range rawTests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.job.JobID = jobsTestID(100 + i)
+			err := env.db.Write(context.Background(), func(tx *sql.Tx) error {
+				return rawInsertUpload(context.Background(), tx, tt.job)
+			})
+			if tt.ok && err != nil {
+				t.Fatalf("raw insert: %v", err)
+			}
+			if !tt.ok && err == nil {
+				t.Fatal("raw insert succeeded, want the table CHECK to refuse it")
+			}
+			var rows int
+			readErr := env.db.Read(context.Background(), func(tx *sql.Tx) error {
+				return tx.QueryRowContext(context.Background(), "SELECT count(*) FROM upload_jobs WHERE job_id = ?1", tt.job.JobID).Scan(&rows)
+			})
+			if readErr != nil {
+				t.Fatalf("count rows: %v", readErr)
+			}
+			if want := map[bool]int{true: 1, false: 0}[tt.ok]; rows != want {
+				t.Fatalf("rows after raw insert = %d, want %d", rows, want)
+			}
+		})
+	}
+}
+
+func rawInsertUpload(ctx context.Context, tx *sql.Tx, job UploadJob) error {
+	_, err := tx.ExecContext(ctx, insertUpload,
+		job.JobID, string(job.Kind), string(job.Origin), job.Scope, job.Writer, job.BucketChannelID, job.BucketName, job.ObjectKey,
+		nullableText(job.MultipartUploadID), string(job.State), job.BasePutMsgID, job.IfMatch, boolToInt(job.IfNoneMatch),
+		job.SpoolPath, job.SealedPath, job.PlaintextSize, job.StoredSize, job.ETag, job.SHA256, job.ContentType,
+		defaultJSON(job.UserMetaJSON), defaultJSON(job.SystemMetaJSON), boolToInt(job.Encrypted), job.EncryptionVersion,
+		job.KeyID, nullableBytes(job.FileSalt), nullableBytes(job.NoncePrefix), job.BodyMsgID, job.PutHeader, job.PutMsgID,
+		job.ErrorCode, job.Attempts, 1, 1)
+	return err
 }
 
 func TestListRecoverableUploadsStableOrder(t *testing.T) {
