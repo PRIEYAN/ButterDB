@@ -9,21 +9,25 @@ import (
 
 const anonymousOverrideText = "Request specific response headers cannot be used for anonymous GET requests."
 
-var overrideParameters = []struct {
+type overrideParameter struct {
 	query  string
 	header string
-}{
-	{"response-content-type", "Content-Type"},
-	{"response-content-language", "Content-Language"},
-	{"response-expires", "Expires"},
-	{"response-cache-control", "Cache-Control"},
-	{"response-content-disposition", "Content-Disposition"},
-	{"response-content-encoding", "Content-Encoding"},
+}
+
+func overrideParameters() []overrideParameter {
+	return []overrideParameter{
+		{"response-content-type", "Content-Type"},
+		{"response-content-language", "Content-Language"},
+		{"response-expires", "Expires"},
+		{"response-cache-control", "Cache-Control"},
+		{"response-content-disposition", "Content-Disposition"},
+		{"response-content-encoding", "Content-Encoding"},
+	}
 }
 
 func responseOverrides(query url.Values, signed bool) (map[string]string, error) {
 	overrides := map[string]string{}
-	for _, parameter := range overrideParameters {
+	for _, parameter := range overrideParameters() {
 		values, present := query[parameter.query]
 		if !present {
 			continue

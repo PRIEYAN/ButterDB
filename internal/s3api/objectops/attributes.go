@@ -28,15 +28,19 @@ type attributes struct {
 	systemMeta  map[string]string
 }
 
-var systemHeaders = []struct {
+type systemHeader struct {
 	header string
 	name   string
-}{
-	{"Cache-Control", "cache-control"},
-	{"Content-Disposition", "content-disposition"},
-	{"Content-Encoding", "content-encoding"},
-	{"Content-Language", "content-language"},
-	{"Expires", "expires"},
+}
+
+func systemHeaders() []systemHeader {
+	return []systemHeader{
+		{"Cache-Control", "cache-control"},
+		{"Content-Disposition", "content-disposition"},
+		{"Content-Encoding", "content-encoding"},
+		{"Content-Language", "content-language"},
+		{"Expires", "expires"},
+	}
 }
 
 func parseAttributes(header http.Header) (attributes, error) {
@@ -57,7 +61,7 @@ func parseAttributes(header http.Header) (attributes, error) {
 
 func parseSystemMeta(header http.Header) (map[string]string, error) {
 	system := map[string]string{}
-	for _, entry := range systemHeaders {
+	for _, entry := range systemHeaders() {
 		value := strings.Join(header.Values(entry.header), ", ")
 		if entry.name == "content-encoding" {
 			value = withoutAWSChunked(value)

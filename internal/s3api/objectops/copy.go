@@ -184,14 +184,12 @@ func (h *Handlers) destinationAttributes(r *http.Request, replace bool, meta obj
 }
 
 func (h *Handlers) runCopy(w http.ResponseWriter, r *http.Request, rt router.Route, a sigv4.Auth, prepared preparedCopy) {
-	long, startErr := xmlcodec.StartLongResponse(w, h.deps.Config.KeepAliveInterval)
-	if startErr != nil {
-		h.deps.Logger.Warn("s3 copy response could not start", "request_id", w.Header().Get(s3err.HeaderRequestID))
-	}
-	result, err := h.copyBody(r, prepared)
-	if long == nil {
+	long, err := xmlcodec.StartLongResponse(w, h.deps.Config.KeepAliveInterval)
+	if err != nil {
+		h.fail(w, r, rt, a, err)
 		return
 	}
+	result, err := h.copyBody(r, prepared)
 	if err != nil {
 		h.finishCopyFailure(w, rt, a, long, err)
 		return

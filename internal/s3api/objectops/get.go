@@ -129,7 +129,7 @@ func (h *Handlers) responseHeaders(request readRequest, meta object.ObjectMeta, 
 	}
 	headers.Set("Content-Type", contentType)
 	httprange.SetValidators(headers, httprange.EntityFromMeta(meta))
-	for _, entry := range systemHeaders {
+	for _, entry := range systemHeaders() {
 		if value := meta.SystemMeta[entry.name]; value != "" {
 			headers.Set(entry.header, value)
 		}

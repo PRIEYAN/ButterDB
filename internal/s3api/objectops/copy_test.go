@@ -3,6 +3,7 @@ package objectops
 import (
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -342,5 +343,34 @@ func TestCopyFailureAfterStatusIsAnErrorDocument(t *testing.T) {
 	}
 	if strings.Contains(body, "<CopyObjectResult") {
 		t.Fatal("a failed copy also carried a result")
+	}
+}
+
+type brokenWriter struct {
+	*deadlineRecorder
+	writes int
+}
+
+func (b *brokenWriter) Write(p []byte) (int, error) {
+	b.writes++
+	if b.writes == 1 {
+		return 0, errors.New("client went away")
+	}
+	return b.deadlineRecorder.Write(p)
+}
+
+func TestCopyDoesNotRunWhenLongResponseCannotStart(t *testing.T) {
+	f := newCopyFixture(t, nil, nil)
+	r := httptest.NewRequest(http.MethodPut, "/photos/dst.txt", nil)
+	r.Header.Set("X-Amz-Copy-Source", "photos/src.txt")
+	w := &brokenWriter{deadlineRecorder: newDeadlineRecorder()}
+	f.handlers.CopyObject(w, r, routeFor(router.OpCopyObject, "dst.txt"), fullAuth(0))
+	if len(f.writer.calls) != 0 {
+		t.Fatal("the copy ran although the response could not start")
+	}
+	for _, opened := range f.store.opened {
+		if !opened.closed {
+			t.Fatal("the source was not closed")
+		}
 	}
 }
