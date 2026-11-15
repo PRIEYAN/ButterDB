@@ -152,15 +152,21 @@ type putCall struct {
 }
 
 type fakePutter struct {
-	index *guardedIndex
-	mu    sync.Mutex
-	calls []putCall
-	err   error
-	msgID int64
+	index   *guardedIndex
+	mu      sync.Mutex
+	calls   []putCall
+	err     error
+	msgID   int64
+	started chan struct{}
+	release chan struct{}
 }
 
 func (p *fakePutter) PutMultipart(_ context.Context, req object.PutRequest, body io.Reader, uploadID, jobID string) (object.ObjectMeta, error) {
 	busy := p.index != nil && p.index.active.Load() != 0
+	if p.started != nil {
+		p.started <- struct{}{}
+		<-p.release
+	}
 	data, readErr := io.ReadAll(body)
 	p.mu.Lock()
 	defer p.mu.Unlock()

@@ -104,7 +104,9 @@ func TestUploadIDValidatedBeforePath(t *testing.T) {
 			ctx := context.Background()
 			_, putErr := h.stage.PutPart(ctx, id, 1, 1, strings.NewReader("x"))
 			_, listErr := h.stage.ListParts(ctx, id, 0, 10)
-			for name, err := range map[string]error{"put part": putErr, "list parts": listErr} {
+			_, completeErr := h.stage.Complete(ctx, id, []CompletedPart{{Number: 1, ETag: "x"}}, Conditions{})
+			abortErr := h.stage.Abort(ctx, id)
+			for name, err := range map[string]error{"put part": putErr, "list parts": listErr, "complete": completeErr, "abort": abortErr} {
 				if !errors.Is(err, errs.ErrNoSuchUpload) {
 					t.Fatalf("%s err = %v, want no such upload", name, err)
 				}
@@ -231,3 +233,5 @@ func TestPutPartRejectsWrongLength(t *testing.T) {
 		t.Fatalf("entries after failures = %v err=%v", entries, err)
 	}
 }
+
+var _ Index = (*jobrepo.MultipartIndex)(nil)

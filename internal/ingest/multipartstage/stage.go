@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PRIEYAN/ButterDB/internal/crypto/format"
@@ -40,8 +41,10 @@ type partReader interface {
 }
 
 type Stage struct {
-	deps   Dependencies
-	reader partReader
+	deps    Dependencies
+	reader  partReader
+	mu      sync.Mutex
+	flights map[string]*completeFlight
 }
 
 func New(deps Dependencies) (*Stage, error) {
@@ -67,7 +70,7 @@ func New(deps Dependencies) (*Stage, error) {
 	if !ok {
 		return nil, fmt.Errorf("multipartstage: %w: filesystem without Open", errs.ErrMissingDependency)
 	}
-	return &Stage{deps: deps, reader: reader}, nil
+	return &Stage{deps: deps, reader: reader, flights: make(map[string]*completeFlight)}, nil
 }
 
 func (s *Stage) Create(ctx context.Context, req CreateRequest) (Upload, error) {
