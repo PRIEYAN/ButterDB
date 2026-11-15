@@ -8,6 +8,7 @@ import (
 
 	"github.com/PRIEYAN/ButterDB/internal/buckets"
 	"github.com/PRIEYAN/ButterDB/internal/crypto/keyring"
+	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/storage/bucketrepo"
 	"github.com/PRIEYAN/ButterDB/internal/syncer"
 	"github.com/PRIEYAN/ButterDB/internal/syncer/reconcile"
@@ -22,7 +23,7 @@ var (
 	_ scan.PeerResolver          = (*channelPeers)(nil)
 	_ buckets.KeyMinter          = (*encryptionKeyMinter)(nil)
 	_ buckets.KeyPresence        = (*activeKeyPresence)(nil)
-	_ buckets.ActiveJobs         = noActiveJobs{}
+	_ buckets.ActiveJobs         = jobsUnavailable{}
 	_ reconcile.BucketReferences = (*bucketReferences)(nil)
 )
 
@@ -102,11 +103,10 @@ func (p *activeKeyPresence) HasActiveKey(ctx context.Context, bucketChannelID in
 	return found, err
 }
 
-// No job repository exists before phase 06, so no bucket can have an active job yet.
-type noActiveJobs struct{}
+type jobsUnavailable struct{}
 
-func (noActiveJobs) HasActiveJobs(context.Context, int64) (bool, error) {
-	return false, nil
+func (jobsUnavailable) HasActiveJobs(context.Context, int64) (bool, error) {
+	return false, fmt.Errorf("core: active jobs: %w: control database", errs.ErrMissingDependency)
 }
 
 type databaseReader interface {

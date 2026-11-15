@@ -145,6 +145,7 @@ func (r *registrySetup) create(ctx context.Context) (RegistryOutcome, error) {
 	}
 	assembled, err := NewSync(SyncDependencies{
 		Database:     r.deps.Database,
+		Control:      r.deps.Control,
 		Projection:   r.deps.Projection,
 		Telegram:     r.deps.Telegram,
 		Sender:       r.deps.Sender,
