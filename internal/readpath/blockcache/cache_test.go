@@ -298,8 +298,12 @@ func TestBudgetUnderConcurrency(t *testing.T) {
 	if peak := tracker.peakBytes(); peak > budget {
 		t.Fatalf("peak on-disk bytes %d exceed budget %d", peak, budget)
 	}
-	if total := diskBytes(t, dir); total > budget {
+	total := diskBytes(t, dir)
+	if total > budget {
 		t.Fatalf("final disk use %d exceeds budget %d", total, budget)
+	}
+	if tracked := tracker.totalBytes(); tracked != total {
+		t.Fatalf("tracker total %d differs from on-disk bytes %d", tracked, total)
 	}
 	if used, _, _ := cache.store.usage(); used > budget {
 		t.Fatalf("indexed use %d exceeds budget %d", used, budget)

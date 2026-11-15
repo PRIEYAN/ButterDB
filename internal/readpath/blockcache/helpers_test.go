@@ -201,6 +201,12 @@ func (t *trackingFiles) add(delta int64) {
 	}
 }
 
+func (t *trackingFiles) totalBytes() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.total
+}
+
 func (t *trackingFiles) peakBytes() int64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -209,7 +215,7 @@ func (t *trackingFiles) peakBytes() int64 {
 
 func (t *trackingFiles) sizeOf(name string) int64 {
 	info, err := t.Files.Stat(name)
-	if err != nil {
+	if err != nil || info.IsDir() {
 		return 0
 	}
 	return info.Size()
