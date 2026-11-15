@@ -39,7 +39,7 @@ func (c CORSConfig) Enabled() bool {
 	return len(c.AllowedOrigins) > 0
 }
 
-func (c CORSConfig) exposed() []string {
+func (c CORSConfig) ExposedHeaders() []string {
 	if len(c.ExposeHeaders) == 0 {
 		return DefaultExposeHeaders()
 	}
@@ -108,7 +108,7 @@ func (c CORSConfig) applyActual(h http.Header, r *http.Request) {
 		return
 	}
 	h.Set("Access-Control-Allow-Origin", c.allowOriginValue(origin))
-	h.Set("Access-Control-Expose-Headers", strings.Join(c.exposed(), ", "))
+	h.Set("Access-Control-Expose-Headers", strings.Join(c.ExposedHeaders(), ", "))
 	h.Add("Vary", "Origin")
 }
 
@@ -131,7 +131,7 @@ func (c CORSConfig) preflight(w http.ResponseWriter, r *http.Request) {
 		h.Set("Access-Control-Allow-Headers", requested)
 	}
 	h.Set("Access-Control-Max-Age", strconv.Itoa(c.MaxAgeSeconds))
-	h.Set("Access-Control-Expose-Headers", strings.Join(c.exposed(), ", "))
+	h.Set("Access-Control-Expose-Headers", strings.Join(c.ExposedHeaders(), ", "))
 	h.Add("Vary", preflightVary)
 	w.WriteHeader(http.StatusOK)
 }
