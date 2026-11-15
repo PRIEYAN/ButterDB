@@ -307,9 +307,9 @@ func TestNewRejectsBadDependencies(t *testing.T) {
 		name string
 		deps Dependencies
 	}{
-		{"nil clock", Dependencies{Config: Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}}},
-		{"zero puts", Dependencies{Config: Config{MaxConcurrentPutsPerKey: 1}, Clock: clock.NewFake(testEpoch)}},
-		{"zero puts per key", Dependencies{Config: Config{MaxConcurrentPuts: 1}, Clock: clock.NewFake(testEpoch)}},
+		{"nil clock", Dependencies{Config: Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}, Pacer: noDelayPacer{}}},
+		{"zero puts", Dependencies{Config: Config{MaxConcurrentPutsPerKey: 1}, Pacer: noDelayPacer{}, Clock: clock.NewFake(testEpoch)}},
+		{"zero puts per key", Dependencies{Config: Config{MaxConcurrentPuts: 1}, Pacer: noDelayPacer{}, Clock: clock.NewFake(testEpoch)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PRIEYAN/ButterDB/internal/platform/clock"
+	"github.com/PRIEYAN/ButterDB/internal/tgclient/flow"
 )
 
 var testEpoch = time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
@@ -69,7 +70,7 @@ func (s *blockingSleeper) awaitStarted(t *testing.T) time.Duration {
 func newTestController(t *testing.T, cfg Config, sleeper Sleeper) (*Controller, *clock.Fake) {
 	t.Helper()
 	clk := clock.NewFake(testEpoch)
-	c, err := New(Dependencies{Config: cfg, Clock: clk, Sleeper: sleeper})
+	c, err := New(Dependencies{Config: cfg, Pacer: noDelayPacer{}, Clock: clk, Sleeper: sleeper})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -86,4 +87,10 @@ func receiveWithin[T any](t *testing.T, ch <-chan T) T {
 		var zero T
 		return zero
 	}
+}
+
+type noDelayPacer struct{}
+
+func (noDelayPacer) Reserve(flow.SendClass) (time.Duration, func()) {
+	return 0, func() {}
 }

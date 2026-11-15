@@ -15,17 +15,22 @@ const putSlotsBusyReason = "put slots busy"
 
 type Dependencies struct {
 	Config  Config
+	Pacer   Pacer
 	Clock   clock.Clock
 	Sleeper Sleeper
 }
 
 type Controller struct {
+	pacer   Pacer
 	clock   clock.Clock
 	sleeper Sleeper
 	slots   *slotTable
 }
 
 func New(deps Dependencies) (*Controller, error) {
+	if deps.Pacer == nil {
+		return nil, fmt.Errorf("admission: %w: pacer", errs.ErrMissingDependency)
+	}
 	if deps.Clock == nil {
 		return nil, fmt.Errorf("admission: %w: clock", errs.ErrMissingDependency)
 	}
@@ -40,6 +45,7 @@ func New(deps Dependencies) (*Controller, error) {
 		sleeper = timerSleeper{}
 	}
 	return &Controller{
+		pacer:   deps.Pacer,
 		clock:   deps.Clock,
 		sleeper: sleeper,
 		slots:   newSlotTable(deps.Config.MaxConcurrentPuts, deps.Config.MaxConcurrentPutsPerKey),
