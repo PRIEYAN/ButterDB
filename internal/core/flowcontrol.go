@@ -31,13 +31,14 @@ type FlowDependencies struct {
 }
 
 type FlowControl struct {
-	Limiter      *flow.SendLimiter
-	Writes       *flow.WriteCoordinator
-	GetFile      *flow.GetFileLimiter
-	UploadSlots  *flow.UploadPartSlots
-	ControlRetry flow.FloodWaitRetryPolicy
-	UploadRetry  flow.FloodWaitRetryPolicy
-	BlockRetry   flow.FloodWaitRetryPolicy
+	Limiter        *flow.SendLimiter
+	Writes         *flow.WriteCoordinator
+	PrepacedWrites *flow.WriteCoordinator
+	GetFile        *flow.GetFileLimiter
+	UploadSlots    *flow.UploadPartSlots
+	ControlRetry   flow.FloodWaitRetryPolicy
+	UploadRetry    flow.FloodWaitRetryPolicy
+	BlockRetry     flow.FloodWaitRetryPolicy
 }
 
 func NewFlowControl(deps FlowDependencies) (*FlowControl, error) {
@@ -69,13 +70,14 @@ func NewFlowControl(deps FlowDependencies) (*FlowControl, error) {
 		}
 	}
 	return &FlowControl{
-		Limiter:      limiter,
-		Writes:       writes,
-		GetFile:      flow.NewGetFileLimiter(),
-		UploadSlots:  flow.NewUploadPartSlots(),
-		ControlRetry: control,
-		UploadRetry:  upload,
-		BlockRetry:   block,
+		Limiter:        limiter,
+		Writes:         writes,
+		PrepacedWrites: writes.Prepaced(),
+		GetFile:        flow.NewGetFileLimiter(),
+		UploadSlots:    flow.NewUploadPartSlots(),
+		ControlRetry:   control,
+		UploadRetry:    upload,
+		BlockRetry:     block,
 	}, nil
 }
 

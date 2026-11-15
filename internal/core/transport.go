@@ -42,6 +42,7 @@ type Transport struct {
 	Connection *conn.Connection
 	Activity   *conn.Activity
 	Sender     *send.Sender
+	Prepaced   *send.Sender
 	Reader     *rangeio.Reader
 	Stream     *rangeio.Stream
 	Channels   *rpc.Client
@@ -86,16 +87,13 @@ func NewTransport(deps TransportDependencies) (*Transport, error) {
 
 func assembleTransport(deps TransportDependencies, connection *conn.Connection, activity *conn.Activity) (*Transport, error) {
 	flowControl := deps.Flow
-	sender, err := send.New(send.Dependencies{
-		Invoker:      connection,
-		Writes:       flowControl.Writes,
-		Slots:        flowControl.UploadSlots,
-		UploadRetry:  flowControl.UploadRetry,
-		ControlRetry: flowControl.ControlRetry,
-		Logger:       deps.Logger,
-	})
+	sender, err := newSender(flowControl, connection, flowControl.Writes, deps.Logger)
 	if err != nil {
 		return nil, fmt.Errorf("core: transport: sender: %w", err)
+	}
+	prepaced, err := newSender(flowControl, connection, flowControl.PrepacedWrites, deps.Logger)
+	if err != nil {
+		return nil, fmt.Errorf("core: transport: pre-paced sender: %w", err)
 	}
 	reader, err := rangeio.New(rangeio.Dependencies{
 		Invoker:   connection,
@@ -127,12 +125,24 @@ func assembleTransport(deps TransportDependencies, connection *conn.Connection, 
 		Connection: connection,
 		Activity:   activity,
 		Sender:     sender,
+		Prepaced:   prepaced,
 		Reader:     reader,
 		Stream:     stream,
 		Channels:   channels,
 		Auth:       auth,
 		Flow:       flowControl,
 	}, nil
+}
+
+func newSender(flowControl *FlowControl, invoker scope.Invoker, writes tgclient.WriteGate, logger *slog.Logger) (*send.Sender, error) {
+	return send.New(send.Dependencies{
+		Invoker:      invoker,
+		Writes:       writes,
+		Slots:        flowControl.UploadSlots,
+		UploadRetry:  flowControl.UploadRetry,
+		ControlRetry: flowControl.ControlRetry,
+		Logger:       logger,
+	})
 }
 
 func (t *Transport) Start(ctx context.Context) error {

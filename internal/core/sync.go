@@ -28,6 +28,7 @@ const registryChannelTitle = "butterDB registry"
 
 type SyncDependencies struct {
 	Database     *sqlitedb.DB
+	Control      *sqlitedb.DB
 	Projection   *Projection
 	Telegram     tgclient.ChannelRPC
 	Sender       tgclient.Sender
@@ -191,7 +192,7 @@ func (s *Sync) assembleBuckets(deps SyncDependencies, stores *channelStores) err
 		Creator:      deps.Telegram,
 		Keys:         &encryptionKeyMinter{ring: deps.Ring, random: deps.Random},
 		KeyPresence:  &activeKeyPresence{keys: bucketRepo, fingerprint: deps.Ring.FingerprintString()},
-		Jobs:         noActiveJobs{},
+		Jobs:         activeJobsFor(deps.Control),
 		WriteGates:   s.WriteGates,
 		Random:       deps.Random,
 		DeploymentID: deps.DeploymentID,
@@ -258,4 +259,11 @@ func recordRegistryChannel(ctx context.Context, channels syncer.ChannelStore, ch
 		return fmt.Errorf("core: record registry channel %d: %w", channelID, err)
 	}
 	return nil
+}
+
+func activeJobsFor(control *sqlitedb.DB) buckets.ActiveJobs {
+	if control == nil {
+		return jobsUnavailable{}
+	}
+	return &activeJobs{db: control}
 }
