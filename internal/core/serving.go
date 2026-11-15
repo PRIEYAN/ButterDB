@@ -27,6 +27,13 @@ type Serving struct {
 }
 
 func (a *App) StartServing(ctx context.Context) (*Serving, error) {
+	dir := a.DataDir()
+	if dir == nil {
+		return nil, ErrAppNotStarted
+	}
+	if !fileExists(dir.Join(stateFileName)) {
+		return nil, ErrNotLinked
+	}
 	files, ok := a.fsys.(blockcache.Files)
 	if !ok {
 		return nil, errFilesUnusable

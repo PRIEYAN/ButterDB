@@ -130,6 +130,25 @@ func TestServeSecondInstanceExitsThree(t *testing.T) {
 	}
 }
 
+func TestServeSkipsS3ListenerWhenNotLinked(t *testing.T) {
+	dir := privateTempDir(t)
+	ta := newTestApp([]string{"BUTTERDB_DATA_DIR=" + dir})
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	done := runInBackground(ta.app, ctx, []string{"serve"})
+	waitFor(t, "serve to start", func() bool { return strings.Contains(ta.stdout.String(), "serve started") })
+	stop()
+	if code := <-done; code != exitOK {
+		t.Fatalf("serve exit %d, stderr %q", code, ta.stderr.String())
+	}
+	if !strings.Contains(ta.stdout.String(), "s3 listener not started: deployment is not linked") {
+		t.Fatalf("stdout %q does not say the s3 listener was skipped", ta.stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "control.db")); !os.IsNotExist(err) {
+		t.Fatalf("unlinked serve created control.db: %v", err)
+	}
+}
+
 func TestServeRefusesLooseDataDir(t *testing.T) {
 	dir := privateTempDir(t)
 	if err := os.Chmod(dir, 0o755); err != nil {
