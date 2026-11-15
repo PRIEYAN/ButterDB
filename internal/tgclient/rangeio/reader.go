@@ -153,6 +153,9 @@ func (r *Reader) refreshReference(ctx context.Context, stale tgclient.DocumentRe
 	}
 	key := strconv.FormatInt(stale.Peer.ChannelID, 10) + ":" + strconv.FormatInt(stale.MsgID, 10) + ":" + string(stale.FileReference)
 	value, err, _ := r.refresh.Do(key, func() (any, error) {
+		if known, ok := r.refreshedFor(stale); ok {
+			return known, nil
+		}
 		documentID, accessHash, reference, dcID, err := r.refresher.RefreshDocument(ctx, stale.Peer.ChannelID, stale.Peer.AccessHash, stale.MsgID)
 		if err != nil {
 			return nil, err
