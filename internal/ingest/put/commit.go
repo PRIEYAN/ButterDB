@@ -46,14 +46,22 @@ func attemptedState(state jobrepo.UploadState) bool {
 }
 
 func (s *Putter) commitJob(ctx context.Context, job *jobrepo.UploadJob, budget admission.Budget, mode commitMode) (object.ObjectMeta, error) {
-	release, err := s.locker.Lock(ctx, objectLockKey(job.BucketChannelID, job.ObjectKey))
+	done, err := s.commitLocked(ctx, job, budget, mode)
 	if err != nil {
 		return object.ObjectMeta{}, err
+	}
+	return s.afterCommit(ctx, *job, done), nil
+}
+
+func (s *Putter) commitLocked(ctx context.Context, job *jobrepo.UploadJob, budget admission.Budget, mode commitMode) (committedPut, error) {
+	release, err := s.locker.Lock(ctx, objectLockKey(job.BucketChannelID, job.ObjectKey))
+	if err != nil {
+		return committedPut{}, err
 	}
 	defer release()
 	current, found, err := s.currentObject(ctx, job.BucketChannelID, job.ObjectKey)
 	if err != nil {
-		return object.ObjectMeta{}, err
+		return committedPut{}, err
 	}
 	var done committedPut
 	if attemptedState(job.State) {
@@ -62,10 +70,10 @@ func (s *Putter) commitJob(ctx context.Context, job *jobrepo.UploadJob, budget a
 		done, err = s.attemptPut(ctx, job, budget, mode, current, found)
 	}
 	if err != nil {
-		return object.ObjectMeta{}, err
+		return committedPut{}, err
 	}
 	done.previous = done.previous || found
-	return s.afterCommit(ctx, *job, done), nil
+	return done, nil
 }
 
 func (s *Putter) attemptPut(ctx context.Context, job *jobrepo.UploadJob, budget admission.Budget, mode commitMode, current object.ObjectMeta, found bool) (committedPut, error) {
