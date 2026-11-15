@@ -20,9 +20,9 @@ import (
 )
 
 var (
-	errEntryTooLarge = errors.New("block exceeds cache budget")
-	errCacheFull     = errors.New("cache is full")
-	errCacheDisabled = errors.New("cache is disabled")
+	errEntryTooLarge = errors.New("blockcache: block exceeds cache budget")
+	errCacheFull     = errors.New("blockcache: cache is full")
+	errCacheDisabled = errors.New("blockcache: cache is disabled")
 )
 
 type Files interface {

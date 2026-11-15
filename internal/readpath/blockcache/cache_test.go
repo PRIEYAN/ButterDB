@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -273,22 +272,11 @@ func TestBudgetUnderConcurrency(t *testing.T) {
 	const budget = 8 * 4096
 	origin := &fakeOrigin{}
 	dir := t.TempDir()
-	cache := newTestCache(t, origin, dir, budget)
-	stop := make(chan struct{})
-	var sampler sync.WaitGroup
-	var worst atomic.Int64
-	sampler.Go(func() {
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			if total := diskBytes(t, dir); total > worst.Load() {
-				worst.Store(total)
-			}
-		}
-	})
+	tracker := &trackingFiles{Files: fsx.OS{}}
+	cache, err := New(Dependencies{Origin: origin, Files: tracker, Logger: discardLogger(), Dir: dir, MaxBytes: budget})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var readers sync.WaitGroup
 	for g := range 16 {
 		readers.Go(func() {
@@ -307,16 +295,17 @@ func TestBudgetUnderConcurrency(t *testing.T) {
 		})
 	}
 	readers.Wait()
-	close(stop)
-	sampler.Wait()
-	if got := worst.Load(); got > budget {
-		t.Fatalf("peak disk use %d exceeds budget %d", got, budget)
+	if peak := tracker.peakBytes(); peak > budget {
+		t.Fatalf("peak on-disk bytes %d exceed budget %d", peak, budget)
 	}
 	if total := diskBytes(t, dir); total > budget {
 		t.Fatalf("final disk use %d exceeds budget %d", total, budget)
 	}
 	if used, _, _ := cache.store.usage(); used > budget {
 		t.Fatalf("indexed use %d exceeds budget %d", used, budget)
+	}
+	if tracker.peakBytes() == 0 {
+		t.Fatal("tracker observed no writes")
 	}
 }
 

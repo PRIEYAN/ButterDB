@@ -2,11 +2,13 @@ package blockcache
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"sync"
+
+	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 )
 
-var errClosed = errors.New("blockcache: closed")
+var errClosed = fmt.Errorf("blockcache: closed: %w", errs.ErrServiceUnavailable)
 
 type flight struct {
 	done    chan struct{}

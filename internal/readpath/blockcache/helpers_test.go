@@ -186,3 +186,76 @@ func (f *recordingFile) Sync() error {
 	f.owner.record("sync")
 	return f.File.Sync()
 }
+
+type trackingFiles struct {
+	Files
+	mu    sync.Mutex
+	total int64
+	peak  int64
+}
+
+func (t *trackingFiles) add(delta int64) {
+	t.total += delta
+	if t.total > t.peak {
+		t.peak = t.total
+	}
+}
+
+func (t *trackingFiles) peakBytes() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.peak
+}
+
+func (t *trackingFiles) sizeOf(name string) int64 {
+	info, err := t.Files.Stat(name)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
+}
+
+func (t *trackingFiles) CreateTemp(dir, pattern string) (fsx.File, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	file, err := t.Files.CreateTemp(dir, pattern)
+	if err != nil {
+		return nil, err
+	}
+	return &trackingFile{File: file, owner: t}, nil
+}
+
+func (t *trackingFiles) Rename(oldpath, newpath string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	replaced := t.sizeOf(newpath)
+	if err := t.Files.Rename(oldpath, newpath); err != nil {
+		return err
+	}
+	t.add(-replaced)
+	return nil
+}
+
+func (t *trackingFiles) Remove(name string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	size := t.sizeOf(name)
+	if err := t.Files.Remove(name); err != nil {
+		return err
+	}
+	t.add(-size)
+	return nil
+}
+
+type trackingFile struct {
+	fsx.File
+	owner *trackingFiles
+}
+
+func (f *trackingFile) Write(p []byte) (int, error) {
+	f.owner.mu.Lock()
+	defer f.owner.mu.Unlock()
+	n, err := f.File.Write(p)
+	f.owner.add(int64(n))
+	return n, err
+}
