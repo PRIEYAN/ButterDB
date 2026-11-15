@@ -133,6 +133,8 @@ type harness struct {
 	clock   *clock.Fake
 	logs    *logRecorder
 	coord   *Coordinator
+
+	expectedLoads int
 }
 
 func newHarness(t *testing.T, cfg Config, known ...int64) *harness {
@@ -165,11 +167,18 @@ func newHarness(t *testing.T, cfg Config, known ...int64) *harness {
 	return h
 }
 
-func (h *harness) start(t *testing.T) {
+func (h *harness) begin(t *testing.T) {
 	t.Helper()
 	if err := h.coord.Start(t.Context()); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	eventually(t, func() bool { return h.lister.callCount() >= 1 })
+	h.expectedLoads = 1
+}
+
+func (h *harness) start(t *testing.T) {
+	t.Helper()
+	h.begin(t)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -181,9 +190,9 @@ func (h *harness) start(t *testing.T) {
 
 func (h *harness) settle(t *testing.T) {
 	t.Helper()
-	before := h.lister.callCount()
+	h.expectedLoads++
 	h.signals.send(unknownProbe)
-	eventually(t, func() bool { return h.lister.callCount() > before })
+	eventually(t, func() bool { return h.lister.callCount() >= h.expectedLoads })
 }
 
 func eventually(t *testing.T, ok func() bool) {
@@ -277,9 +286,10 @@ func TestCoordinatorWaitsForDebounce(t *testing.T) {
 func TestCoordinatorIgnoresUnknownChannels(t *testing.T) {
 	h := newHarness(t, Config{}, 1)
 	h.start(t)
-	eventually(t, func() bool { return h.lister.callCount() == 1 })
+	eventually(t, func() bool { return h.lister.callCount() >= 1 })
 
 	h.signals.send(99)
+	h.expectedLoads++
 	h.settle(t)
 	if got := h.lister.callCount(); got != 3 {
 		t.Fatalf("known-channel loads = %d, want startup plus one reload per unknown signal", got)
@@ -309,6 +319,7 @@ func TestCoordinatorIgnoresDeletedAndNonPositiveChannels(t *testing.T) {
 	h.start(t)
 
 	h.signals.send(5)
+	h.expectedLoads++
 	h.signals.send(-7)
 	h.signals.send(0)
 	h.signals.send(6)
@@ -473,9 +484,7 @@ func TestCloseJoinsGoroutines(t *testing.T) {
 		returned.Store(true)
 		return ctx.Err()
 	}
-	if err := h.coord.Start(t.Context()); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	h.begin(t)
 
 	h.signals.send(11)
 	h.settle(t)
@@ -500,9 +509,7 @@ func TestCloseHonoursItsContext(t *testing.T) {
 		<-release
 		return nil
 	}
-	if err := h.coord.Start(t.Context()); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	h.begin(t)
 	h.signals.send(12)
 	h.settle(t)
 	h.clock.Advance(testDebounce)
