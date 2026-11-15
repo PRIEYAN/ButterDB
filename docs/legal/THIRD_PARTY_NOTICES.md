@@ -145,7 +145,7 @@ that lands in two destinations has one row per destination.
 | `backend/mountcache/lru.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
 | `backend/mountcache/coalescer.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
 | `backend/mountdav/conditions.go` (ETag conditions) | `internal/readpath/httprange` | ported | 07 | ported 30888a5 (`serializeEntityTag` from `backend/mountdav/locks.go` landed as `SerializeEntityTag`) |
-| `backend/mountdav/body_deadline.go` | `internal/s3api/objectops` | ported | 08 | planned |
+| `backend/mountdav/body_deadline.go` | `internal/s3api/objectops` | ported | 08 | ported f363e50 (`idlebody.go` and 4 of its 5 tests; the control-body and PROPFIND cases are WebDAV-only and dropped) |
 | `backend/mountcache/coalescer.go` | `internal/mediaapi/derivcache` | ported | 13 | planned |
 
 ### 2.2 Design references
@@ -178,12 +178,12 @@ that lands in two destinations has one row per destination.
 | `backend/projection/multipart.go` (part cleanup queue) | `internal/ingest/sweeper` | design reference | 06 | referenced bf1d9d7, 74c4f17 (the queue itself landed in `internal/storage/objectrepo`) |
 | `backend/services/file/mutations.go` | `internal/ingest/remove`, `internal/ingest/sweeper` | design reference | 06 | referenced 3c0a999, b49af86, 74c4f17 |
 | `backend/services/file/service.go` | `internal/ingest/admission`, `internal/ingest/spool` | design reference | 06 | referenced 8ce0972, 63c5665 |
-| `backend/services/file/upload_failures.go` | `internal/ingest/put`, `internal/s3api/s3err` | design reference | 06, 08 | referenced dd7c636 for put; s3err planned in 08 |
+| `backend/services/file/upload_failures.go` | `internal/ingest/put`, `internal/s3api/s3err` | design reference | 06, 08 | referenced dd7c636 for put; s3err: not used, the unknown-outcome mapping is `s3err.Map` per s3-api section 12.1 |
 | `backend/mountadapter/conditions.go` | `internal/readpath/httprange` | design reference | 07 | referenced 30888a5 |
 | `backend/thumbnail/cache.go` | `internal/readpath/blockcache`, `internal/mediaapi/derivcache` | design reference | 07, 13 | referenced e1edf6a for blockcache; derivcache planned in 13 |
 | `backend/media/resolver.go`, `service.go`, `types.go` | `internal/readpath/objectreader` | design reference | 07 | referenced 7173877 |
-| `backend/mountdav/server.go` (listener timeouts) | `internal/core` | design reference | 08 | planned |
-| `internal/app/operation.go` | `internal/s3api/s3err` | design reference | 08 | planned |
+| `backend/mountdav/server.go` (listener timeouts) | `internal/core` | design reference | 08 | referenced 0db6453 (server timeouts and bounded graceful shutdown; the values are the s3-api section 2.2 ones) |
+| `internal/app/operation.go` | `internal/s3api/s3err` | design reference | 08 | not used: s3err maps `errs` sentinels to S3 codes per s3-api section 14 and adopts no `OperationError` type |
 | `backend/daemon/auth_drive.go` | `internal/adminapi/setup` | design reference | 09 | planned |
 | `backend/daemon/protocol.go` | `api/adminv1` | design reference | 09 | planned |
 | `internal/app/backend_startup.go` | `apps/admin/internal/ui/connect`, `internal/ops/health` | design reference | 10, 11 | planned |
