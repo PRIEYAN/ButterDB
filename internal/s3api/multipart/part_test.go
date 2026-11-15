@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PRIEYAN/ButterDB/internal/access/sigv4"
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
@@ -298,6 +300,7 @@ func TestUploadPartStageFailures(t *testing.T) {
 		{name: "upload vanished", err: errs.ErrNoSuchUpload, wantStatus: 404, wantCode: "NoSuchUpload"},
 		{name: "slow down", err: errs.ErrSlowDown, wantStatus: 503, wantCode: "SlowDown"},
 		{name: "short body", err: io.ErrUnexpectedEOF, wantStatus: 400, wantCode: "IncompleteBody"},
+		{name: "body idle timeout", err: os.ErrDeadlineExceeded, wantStatus: 400, wantCode: "RequestTimeout"},
 		{name: "unmapped failure", err: io.ErrClosedPipe, wantStatus: 500, wantCode: "InternalError"},
 	}
 	for _, test := range tests {
@@ -307,5 +310,13 @@ func TestUploadPartStageFailures(t *testing.T) {
 			rec := uploadPart(fx, requestSpec{method: http.MethodPut, target: partTarget("1"), body: "data"}, writerAuth())
 			assertErrorCode(t, rec, test.wantStatus, test.wantCode)
 		})
+	}
+}
+
+func TestUploadPartWithBodyIdleTimeout(t *testing.T) {
+	fx := newFixture(t, fixtureOptions{config: Config{BodyIdleTimeout: time.Minute}})
+	rec := uploadPart(fx, requestSpec{method: http.MethodPut, target: partTarget("1"), body: "payload"}, writerAuth())
+	if rec.Code != http.StatusOK || string(fx.stage.putCalls[0].body) != "payload" {
+		t.Fatalf("status = %d calls = %+v", rec.Code, fx.stage.putCalls)
 	}
 }

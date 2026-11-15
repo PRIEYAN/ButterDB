@@ -87,6 +87,8 @@ func (h *Handlers) Routes() map[router.Operation]router.HandlerFunc {
 		router.OpUploadPartCopy:          h.UploadPartCopy,
 		router.OpAbortMultipartUpload:    h.AbortMultipartUpload,
 		router.OpCompleteMultipartUpload: h.CompleteMultipartUpload,
+		router.OpListParts:               h.ListParts,
+		router.OpListMultipartUploads:    h.ListMultipartUploads,
 	}
 }
 
