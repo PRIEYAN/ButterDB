@@ -123,13 +123,13 @@ that lands in two destinations has one row per destination.
 | `backend/auth/auth.go` | `internal/tgclient/authrpc`, `internal/identity`, `internal/tgclient/conn` | ported | 04 | ported 7b3357c, 4dd305a, 262a9e6 |
 | `backend/services/auth/service.go` | `internal/identity` | ported | 04 | ported 4dd305a |
 | `backend/livesync/activity.go` (`Handle`, `ChannelIDsFromUpdates`) | `internal/tgclient/conn` | ported | 04 | ported 262a9e6 |
-| `backend/sync/sync.go` | `internal/syncer/scan`, `internal/syncer/reconcile` | ported | 05 | planned |
-| `backend/sync/difference.go` | `internal/syncer/difference` | ported | 05 | planned |
-| `backend/sync/parse.go` | `internal/syncer/scan` | ported | 05 | planned |
-| `backend/sync/initial_scan_spool.go` | `internal/syncer/scan` | ported | 05 | planned |
-| `backend/livesync/coordinator.go` | `internal/syncer/livesync` | ported | 05 | planned |
-| `backend/livesync/activity.go` (`TelegramActivity`, `Signals`) | `internal/syncer/livesync` | ported | 05 | planned |
-| `backend/projection/channels.go` | `internal/storage/channelrepo` | ported | 05 | planned |
+| `backend/sync/sync.go` | `internal/syncer/scan`, `internal/syncer/reconcile` | ported | 05 | ported ace28dd, 04f8f18 |
+| `backend/sync/difference.go` | `internal/syncer/difference` | ported | 05 | ported fa2cf9a |
+| `backend/sync/parse.go` | `internal/syncer/scan` | ported | 05 | ported ace28dd |
+| `backend/sync/initial_scan_spool.go` | `internal/syncer/scan` | ported | 05 | ported ace28dd |
+| `backend/livesync/coordinator.go` | `internal/syncer/livesync` | ported | 05 | ported 39cbec0 |
+| `backend/livesync/activity.go` (`TelegramActivity`, `Signals`) | `internal/syncer/livesync` | ported | 05 | ported 262a9e6 (landed in `internal/tgclient/conn` in phase 04; `internal/syncer/livesync` consumes it through a `SignalSource` port) |
+| `backend/projection/channels.go` | `internal/storage/channelrepo` | ported | 05 | ported c98a591, 2c8e952 |
 | `backend/mountwrite/staging.go` | `internal/ingest/spool` | ported | 06 | planned |
 | `backend/mountwrite/locks.go` | `internal/ingest/put` | ported | 06 | planned |
 | `backend/services/file/hidden_upload.go` | `internal/ingest/put` | ported | 06 | planned |
@@ -164,11 +164,11 @@ that lands in two destinations has one row per destination.
 | `backend/projection/read.go` | `internal/storage/objectrepo` | design reference | 03 | referenced 9be17ab |
 | `backend/services/encryption/key_lease.go` | `internal/crypto/keyring` | design reference | 03 | referenced 9bcd5d3 |
 | `cmd/tdrive/auth_drive_commands.go` | `cmd/butterdbd` (`setup`, `rebuild`) | design reference | 04, 11 | referenced 9a4561c for setup (pattern from the port map, file not read); rebuild planned in 11 |
-| `backend/auth/config.go` | `internal/buckets` | design reference | 05 | planned |
-| `backend/core/peer_resolution.go` | `internal/buckets` | design reference | 05 | planned |
-| `backend/services/personaldrive/service.go` | `internal/buckets`, `internal/syncer/reconcile` | design reference | 05 | planned |
-| `backend/services/lifecycle/service.go` | `internal/buckets` | design reference | 05 | planned |
-| `backend/services/encryption/service.go` | `internal/buckets` | design reference | 05 | planned |
+| `backend/auth/config.go` | `internal/buckets` | design reference | 05 | referenced 3e85118 (pattern only, no code copied) |
+| `backend/core/peer_resolution.go` | `internal/buckets` | design reference | 05 | referenced 3b00024 (pattern only, no code copied) |
+| `backend/services/personaldrive/service.go` | `internal/buckets`, `internal/syncer/reconcile` | design reference | 05 | referenced 3b00024, 95ba346 (pattern only, no code copied) |
+| `backend/services/lifecycle/service.go` | `internal/buckets` | design reference | 05 | referenced 3b00024 (pattern only, no code copied) |
+| `backend/services/encryption/service.go` | `internal/buckets` | design reference | 05 | referenced 3b00024 (pattern only, no code copied) |
 | `backend/mountadapter/remote.go` | `internal/ingest/put` | design reference | 06 | planned |
 | `backend/mountwrite/coordinator.go` | `internal/ingest/put` | design reference | 06 | planned |
 | `backend/mountwrite/journal.go`, `types.go` | `internal/storage/jobrepo` | design reference | 06 | planned |
