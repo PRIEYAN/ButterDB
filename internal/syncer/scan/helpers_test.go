@@ -446,3 +446,12 @@ func (e *env) addChannelRowOnly(channelID int64, kind syncer.ChannelKind) {
 		e.t.Fatalf("upsert channel %d: %v", channelID, err)
 	}
 }
+
+func (e *env) peer(channelID int64) tgclient.InputPeer {
+	e.t.Helper()
+	peer, err := e.client.PeerOf(channelID)
+	if err != nil {
+		e.t.Fatalf("peer of %d: %v", channelID, err)
+	}
+	return peer
+}
