@@ -394,11 +394,7 @@ fields mean.
   "registry_access_hash": -6633117222220155911,
   "registry_marker_msg_id": 2,
   "primary_user_id": 777000123,
-  "server_key_fingerprint": "bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6",
-  "ops_channel_id": 0,
-  "ops_access_hash": 0,
-  "probe_channel_id": 0,
-  "probe_access_hash": 0
+  "server_key_fingerprint": "bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6"
 }
 ```
 
@@ -409,7 +405,6 @@ fields mean.
 | `registry_marker_msg_id` | Message ID of the current marker |
 | `primary_user_id` | Equals the current marker's `uid` and `telegram_accounts.user_id` for role `primary` |
 | `server_key_fingerprint` | Equals the current marker's `kfp` and the loaded key file's fingerprint |
-| `ops_*`, `probe_*` | Owned by operations.md §9.4 and §13.5 |
 
 The deployment ID is not in `state.json`; it is the current marker's `dep`,
 projected into `registry_markers`. The first marker takes its `dep` from
@@ -417,9 +412,10 @@ projected into `registry_markers`. The first marker takes its `dep` from
 adopts an existing registry on a host whose `control.db` was not restored,
 `admin_meta.server_id` is overwritten with the adopted `dep` in the same step
 that writes `state.json`; no device can be paired on such a host yet, so no
-GUI keychain entry is orphaned. Unknown fields are preserved on rewrite
-(operations.md §3.3). A missing file is not an error until an account is
-linked.
+GUI keychain entry is orphaned. Unknown fields are tolerated on load and
+preserved on rewrite (E17). The ops and probe channels are recorded in
+`control.db` (operations.md §3.3), not here. A missing file is not an error
+until an account is linked.
 
 ### 4.4 Startup verification
 

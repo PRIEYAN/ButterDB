@@ -405,7 +405,7 @@ contacts Telegram, never takes the process lock and never writes a file.
 | `spool/` and `multipart/` resolve to the same filesystem as `data_dir` | error |
 | Free space on the data filesystem at least `spool.max_bytes + spool.min_free_bytes` | warning |
 | Server key file exists, passes §2.5 and is exactly 32 bytes (§5.1) | error (absent is a warning when no `state.json` exists, because `serve` generates it) |
-| When `state.json` exists, its `kek_fingerprint` equals the key file's fingerprint | error |
+| When `state.json` exists, its `server_key_fingerprint` equals the key file's fingerprint | error |
 | Every configured secret file passes §2.5 | error |
 | Admin rules of [admin-api.md](admin-api.md) §2.1 (cert/key pair in `files` mode, loopback in `proxy` mode, control socket path at most 103 bytes) | error |
 | S3 rules of [s3-api.md](s3-api.md) §2.1 (`files` TLS pair, `public_url` form, base domains, region pattern, CORS origins) | error |
@@ -490,11 +490,13 @@ directory (`internal/platform/fsx`), so no computed path can escape it
 
 ### 3.3 `state.json` and `ops_channels`
 
-`state.json` is specified by [storage-model.md](storage-model.md) §4.3: fields
-`version`, `deployment_id`, `primary_user_id`, `registry.{channel_id,
-access_hash, marker_msg_id}`, `kek_fingerprint` (`bkf1_` plus the hex of the 16-byte key
-fingerprint, §5.2), `format_version`, `created_at`. Unknown fields are rejected
-on load, so operations state is not kept there.
+`state.json` is specified by [storage-model.md](storage-model.md) §4.3, which
+owns its shape (E17): fields `version`, `registry_channel_id`,
+`registry_access_hash`, `registry_marker_msg_id`, `primary_user_id` and
+`server_key_fingerprint` (`bkf1_` plus the hex of the 16-byte key fingerprint,
+§5.2). The deployment ID is the current marker's `dep`, not a `state.json`
+field. Unknown fields are tolerated on load and preserved on rewrite;
+operations state is still not kept there.
 
 The two channels this document adds, the ops channel (§9.4) and the probe
 channel (§13.5), are recorded in `control.db`. Default (owner may change); the
@@ -577,7 +579,7 @@ The first 16 bytes of
 ([storage-model.md](storage-model.md) §8.1), written everywhere as `bkf1_` followed by
 the 32 lowercase hex characters of those bytes (37 characters, for example `bkf1_3e9a0c51b7d24f6e8a01c9d2b3f4e5a6`, E15). It is
 logged at `INFO` on every start as `kek_fingerprint`, stored in `state.json`
-(`kek_fingerprint`), carried by `t=reg` and `t=encfg` (`kfp`), and written into
+(`server_key_fingerprint`), carried by `t=reg` and `t=encfg` (`kfp`), and written into
 every snapshot manifest and ops-channel caption.
 
 ### 5.3 Generation
@@ -628,12 +630,12 @@ listener binds; that is how invariant 20 of [claude.md](../claude.md) holds.
 | 4 | `processlock.Acquire` | Exit 3 |
 | 5 | `keyring.Load(server_key_file)` (or generate, §5.3); permission rules of §2.5; refuse while `rekey.json` exists | Exit 4 |
 | 6 | `sqlitedb.Open` for `projection.db` and `control.db`; snapshot before migration when `snapshot.before_migrate` and a migration is pending; apply embedded migrations | Exit 5 (newer schema) or 1 |
-| 7 | **Local registry check** ([plan.md](../plan.md) §3.5 step 4): `state.json` loads and validates; its `kek_fingerprint` equals the loaded key's; when it names a registry channel, the projected registry `channels` row and marker in `projection.db` carry the same channel ID and fingerprint | Exit 4 (fingerprint), exit 5 (`state_invalid`, `projection_mismatch`) |
+| 7 | **Local registry check** ([plan.md](../plan.md) §3.5 step 4): `state.json` loads and validates; its `server_key_fingerprint` equals the loaded key's; when it names a registry channel, the projected registry `channels` row and marker in `projection.db` carry the same channel ID and fingerprint | Exit 4 (fingerprint), exit 5 (`state_invalid`, `projection_mismatch`) |
 | 8 | Bind the ops listener. `/healthz` answers `200` from here | Exit 1 |
 | 9 | Bind the admin listener and the control socket. Setup and pairing work even while unlinked | Exit 1 |
 | 10 | Bind the S3 listener and, when `media.enabled`, the media listener. Both answer `503` until the serving gate opens (§7.4) | Exit 1 |
 | 11 | When linked: start the primary `tgclient` run scope and wait up to `telegram.connect_timeout`. On timeout continue; the connection keeps retrying in the background | Proceed degraded |
-| 12 | **Remote registry check** (once connected), steps 3 and 5–7 of [storage-model.md](storage-model.md) §4.4: authorized user equals `primary_user_id`; `channels.getMessages` on `marker_msg_id` returns a `t=reg` whose `dep`, `uid` and `kfp` equal `state.json`; marker `mr` is not above this binary's format version | Failure (`telegram_account_mismatch`, `registry_marker_missing`, `registry_marker_mismatch`, `format_too_new`): one `ERROR` line, the server **refuses**: no sync, no sweeper, S3 stays `503`, the admin listener keeps serving and reports the code in `GET /admin/v1/status`. No automatic repair. Unreachable: stays pending |
+| 12 | **Remote registry check** (once connected), steps 3 and 5–7 of [storage-model.md](storage-model.md) §4.4: authorized user equals `primary_user_id`; `channels.getMessages` on `registry_marker_msg_id` returns a `t=reg` whose `dep`, `uid` and `kfp` equal `state.json`; marker `mr` is not above this binary's format version | Failure (`telegram_account_mismatch`, `registry_marker_missing`, `registry_marker_mismatch`, `format_too_new`): one `ERROR` line, the server **refuses**: no sync, no sweeper, S3 stays `503`, the admin listener keeps serving and reports the code in `GET /admin/v1/status`. No automatic repair. Unreachable: stays pending |
 | 13 | Syncer: registry channel to `Final`, then every bucket channel to `Final`; then live sync | Stays `syncing`; retries per the sync budgets |
 | 14 | Start the ingest sweeper, the replica worker (phase 12) and the transform worker supervisor (phase 13) | Component reported `down` |
 | 15 | Open the serving gate | |
