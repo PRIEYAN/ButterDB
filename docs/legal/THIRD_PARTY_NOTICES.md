@@ -135,16 +135,16 @@ that lands in two destinations has one row per destination.
 | `backend/services/file/hidden_upload.go` | `internal/ingest/put` | ported | 06 | ported dd7c636 |
 | `backend/core/engine.go` (`EmitAndProjectContext`, `sendControlWithRetry`, `controlPeer`) | `internal/ingest/put` | ported | 06 | ported a8df612 |
 | `backend/services/file/upload.go` (`deleteMessagesChunked`) | `internal/ingest/remove` | ported | 06 | ported 3c0a999 |
-| `backend/media/range_reader.go` | `internal/readpath/rangereader` | ported | 07 | planned |
-| `backend/media/cache.go` | `internal/readpath/rangereader` | ported | 07 | planned |
-| `backend/media/server.go` (range parsing and range responses) | `internal/readpath/httprange` | ported | 07 | planned |
-| `backend/mountcontent/reader.go` | `internal/readpath/objectreader` | ported | 07 | planned |
-| `backend/mountcontent/document_cache.go` | `internal/readpath/objectreader` | ported | 07 | planned |
-| `backend/mountcontent/document_resolution.go` | `internal/readpath/objectreader` | ported | 07 | planned |
-| `backend/mountcontent/peer_cache.go` | `internal/readpath/objectreader` | ported | 07 | planned |
-| `backend/mountcache/lru.go` | `internal/readpath/objectreader` | ported | 07 | planned |
-| `backend/mountcache/coalescer.go` | `internal/readpath/objectreader` | ported | 07 | planned |
-| `backend/mountdav/conditions.go` (ETag conditions) | `internal/readpath/httprange` | ported | 07 | planned |
+| `backend/media/range_reader.go` | `internal/readpath/rangereader` | ported | 07 | ported 6a2ef30 |
+| `backend/media/cache.go` | `internal/readpath/rangereader` | ported | 07 | ported 6a2ef30 |
+| `backend/media/server.go` (range parsing and range responses) | `internal/readpath/httprange` | ported | 07 | ported 30888a5 |
+| `backend/mountcontent/reader.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
+| `backend/mountcontent/document_cache.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
+| `backend/mountcontent/document_resolution.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
+| `backend/mountcontent/peer_cache.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
+| `backend/mountcache/lru.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
+| `backend/mountcache/coalescer.go` | `internal/readpath/objectreader` | ported | 07 | ported 7173877 |
+| `backend/mountdav/conditions.go` (ETag conditions) | `internal/readpath/httprange` | ported | 07 | ported 30888a5 (`serializeEntityTag` from `backend/mountdav/locks.go` landed as `SerializeEntityTag`) |
 | `backend/mountdav/body_deadline.go` | `internal/s3api/objectops` | ported | 08 | planned |
 | `backend/mountcache/coalescer.go` | `internal/mediaapi/derivcache` | ported | 13 | planned |
 
@@ -179,9 +179,9 @@ that lands in two destinations has one row per destination.
 | `backend/services/file/mutations.go` | `internal/ingest/remove`, `internal/ingest/sweeper` | design reference | 06 | referenced 3c0a999, b49af86, 74c4f17 |
 | `backend/services/file/service.go` | `internal/ingest/admission`, `internal/ingest/spool` | design reference | 06 | referenced 8ce0972, 63c5665 |
 | `backend/services/file/upload_failures.go` | `internal/ingest/put`, `internal/s3api/s3err` | design reference | 06, 08 | referenced dd7c636 for put; s3err planned in 08 |
-| `backend/mountadapter/conditions.go` | `internal/readpath/httprange` | design reference | 07 | planned |
-| `backend/thumbnail/cache.go` | `internal/readpath/blockcache`, `internal/mediaapi/derivcache` | design reference | 07, 13 | planned |
-| `backend/media/resolver.go`, `service.go`, `types.go` | `internal/readpath/objectreader` | design reference | 07 | planned |
+| `backend/mountadapter/conditions.go` | `internal/readpath/httprange` | design reference | 07 | referenced 30888a5 |
+| `backend/thumbnail/cache.go` | `internal/readpath/blockcache`, `internal/mediaapi/derivcache` | design reference | 07, 13 | referenced e1edf6a for blockcache; derivcache planned in 13 |
+| `backend/media/resolver.go`, `service.go`, `types.go` | `internal/readpath/objectreader` | design reference | 07 | referenced 7173877 |
 | `backend/mountdav/server.go` (listener timeouts) | `internal/core` | design reference | 08 | planned |
 | `internal/app/operation.go` | `internal/s3api/s3err` | design reference | 08 | planned |
 | `backend/daemon/auth_drive.go` | `internal/adminapi/setup` | design reference | 09 | planned |
