@@ -608,7 +608,7 @@ func TestResumeBodySentUnderVersionGuard(t *testing.T) {
 	})
 }
 
-func TestDiscardBodyRefusesMessagesOwnedByLiveObjects(t *testing.T) {
+func TestDiscardHiddenReceiptRejectsMessageIDsWithoutProjectedOwnership(t *testing.T) {
 	w := newWorld(t, "none")
 	live := mustPut(t, w, w.putRequest("owned.bin", 5), []byte("owned"))
 	stranger := jobrepo.UploadJob{
@@ -709,5 +709,46 @@ func TestNewRejectsMissingDependencies(t *testing.T) {
 				t.Fatalf("error = %v, want ErrMissingDependency", err)
 			}
 		})
+	}
+}
+
+func TestPutRecordsAreMillisecondsAndOpTimestampIsSeconds(t *testing.T) {
+	w := newWorld(t, "none")
+	req := w.putRequest("units.txt", 3)
+	req.IdempotencyKey = "units-1"
+	meta := mustPut(t, w, req, []byte("abc"))
+	job := w.jobs.only()
+	nowMilli := w.clock.Now().UnixMilli()
+	if job.CreatedAt != nowMilli || job.UpdatedAt != nowMilli {
+		t.Fatalf("job created_at=%d updated_at=%d, want unix milliseconds %d", job.CreatedAt, job.UpdatedAt, nowMilli)
+	}
+	record, found, err := w.jobs.LookupIdempotency(w.ctx, job.Scope, "units-1")
+	if err != nil || !found {
+		t.Fatalf("idempotency record: found=%v err=%v", found, err)
+	}
+	if record.CreatedAt != nowMilli || record.ExpiresAt != nowMilli+(24*time.Hour).Milliseconds() {
+		t.Fatalf("idempotency created_at=%d expires_at=%d, want milliseconds with a 24h ttl", record.CreatedAt, record.ExpiresAt)
+	}
+	op, err := wire.Parse(wire.ExtractHeaderLine(w.sentControls()[0].Text))
+	if err != nil || op.Timestamp != w.clock.Now().Unix() {
+		t.Fatalf("put op ts = %d err=%v, want unix seconds %d", op.Timestamp, err, w.clock.Now().Unix())
+	}
+	if meta.PutMsgID <= 0 {
+		t.Fatal("put not committed")
+	}
+	w.clock.Advance(24*time.Hour - time.Second)
+	if _, err := w.svc.Put(w.ctx, req, strings.NewReader("abc")); err != nil {
+		t.Fatalf("replay inside the ttl: %v", err)
+	}
+	if w.jobs.count() != 1 {
+		t.Fatal("a replay inside the ttl created a job")
+	}
+	w.clock.Advance(2 * time.Second)
+	again, err := w.svc.Put(w.ctx, req, strings.NewReader("abc"))
+	if err != nil {
+		t.Fatalf("put after the ttl: %v", err)
+	}
+	if again.JobID == meta.JobID {
+		t.Fatal("an expired idempotency record was still honoured")
 	}
 }

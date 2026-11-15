@@ -148,7 +148,7 @@ func (s *Putter) idempotencyRecord(res resolved, job jobrepo.UploadJob, file spo
 		BodySHA256:      hex.EncodeToString(file.SHA256[:]),
 		JobID:           job.JobID,
 		CreatedAt:       job.CreatedAt,
-		ExpiresAt:       job.CreatedAt + int64(idempotencyTTL.Seconds()),
+		ExpiresAt:       job.CreatedAt + idempotencyTTL.Milliseconds(),
 	}
 }
 
@@ -160,7 +160,7 @@ func (s *Putter) replayIdempotent(ctx context.Context, res resolved, file spool.
 	if err != nil {
 		return object.ObjectMeta{}, false, fmt.Errorf("put: look up idempotency record: %w", err)
 	}
-	if !found || record.ExpiresAt <= s.deps.Clock.Now().Unix() {
+	if !found || record.ExpiresAt <= s.deps.Clock.Now().UnixMilli() {
 		return object.ObjectMeta{}, false, nil
 	}
 	if record.BucketChannelID != res.info.ChannelID || record.ObjectKey != string(res.key) || record.BodySHA256 != hex.EncodeToString(file.SHA256[:]) {

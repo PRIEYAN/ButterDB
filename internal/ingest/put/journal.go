@@ -61,7 +61,7 @@ func (s *Putter) newJob(res resolved, jobID string, file spool.File, params *enc
 	if etag == "" {
 		etag = object.SingleETag(file.MD5)
 	}
-	now := s.deps.Clock.Now().Unix()
+	now := s.deps.Clock.Now().UnixMilli()
 	job := jobrepo.UploadJob{
 		JobID:             jobID,
 		Kind:              res.kind,
@@ -102,7 +102,7 @@ func (s *Putter) transition(ctx context.Context, job *jobrepo.UploadJob, to jobr
 		return fmt.Errorf("put: job %s %s to %s: %w", job.JobID, job.State, to, err)
 	}
 	job.State = to
-	job.UpdatedAt = s.deps.Clock.Now().Unix()
+	job.UpdatedAt = s.deps.Clock.Now().UnixMilli()
 	if patch.SealedPath != nil {
 		job.SealedPath = *patch.SealedPath
 	}

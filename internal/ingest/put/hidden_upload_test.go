@@ -107,7 +107,7 @@ func TestUploadHiddenValidatesMetadataAndSourceBeforeRemoteAccess(t *testing.T) 
 	tests := []struct {
 		name    string
 		mutate  func(*object.PutRequest)
-		body    []byte
+		body    string
 		wantErr error
 	}{
 		{name: "negative content length", mutate: func(r *object.PutRequest) { r.ContentLength = -1 }, wantErr: ErrInvalidRequest},
@@ -125,18 +125,27 @@ func TestUploadHiddenValidatesMetadataAndSourceBeforeRemoteAccess(t *testing.T) 
 		{name: "caller identity not a writer name", mutate: func(r *object.PutRequest) { r.AccessKeyID = "bad key" }, wantErr: ErrInvalidRequest},
 		{name: "idempotency key not printable", mutate: func(r *object.PutRequest) { r.IdempotencyKey = "a\x01b" }, wantErr: ErrInvalidRequest},
 		{name: "unknown encryption mode", mutate: func(r *object.PutRequest) { r.Encryption = "aws:kms" }, wantErr: ErrInvalidRequest},
+		{name: "source shorter than declared", mutate: func(r *object.PutRequest) { r.ContentLength = 6 }, body: "short"},
+		{name: "source longer than declared", mutate: func(r *object.PutRequest) { r.ContentLength = 4 }, body: "longer than declared"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t, "none")
 			req := w.putRequest("bad.bin", 4)
 			tc.mutate(&req)
-			p, err := planRequest(req)
-			if err == nil {
-				_, err = p.resolve(w.svc.deps.Buckets.(*fakeBuckets).info)
+			body := tc.body
+			if body == "" {
+				body = "data"
 			}
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("plan error = %v, want %v", err, tc.wantErr)
+			_, err := w.svc.Put(w.ctx, req, strings.NewReader(body))
+			if tc.wantErr == nil && err == nil {
+				t.Fatal("Put accepted a source that does not match the declared length")
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Put error = %v, want %v", err, tc.wantErr)
+			}
+			if w.jobs.count() != 0 {
+				t.Fatalf("jobs = %d, a rejected request must not create a job", w.jobs.count())
 			}
 			if w.sender.resolves != 0 || len(w.sender.files) != 0 || len(w.sentFiles()) != 0 {
 				t.Fatalf("remote access before validation: resolves=%d files=%d", w.sender.resolves, len(w.sender.files))
