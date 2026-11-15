@@ -232,3 +232,28 @@ func (zeroReader) Read(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+func TestWrongRegionCodeFollowsMechanism(t *testing.T) {
+	cases := []struct {
+		name   string
+		target string
+		want   Code
+	}{
+		{"header authentication", "/photos/a", CodeAuthorizationHeaderMalformed},
+		{"presigned query", "/photos/a?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=x", CodeAuthorizationQueryParametersError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			api := MapSigV4(&sigv4.Error{Reason: sigv4.ReasonWrongRegion, Region: "eu-west-1"})
+			Write(rec, httptest.NewRequest(http.MethodGet, tc.target, nil), api)
+			var doc errorDocument
+			if err := xml.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+				t.Fatalf("body: %v", err)
+			}
+			if Code(doc.Code) != tc.want || rec.Code != http.StatusBadRequest {
+				t.Fatalf("code = %s status = %d, want %s", doc.Code, rec.Code, tc.want)
+			}
+		})
+	}
+}

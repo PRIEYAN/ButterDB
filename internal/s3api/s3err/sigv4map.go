@@ -91,11 +91,7 @@ func signatureMismatch(e *sigv4.Error) APIError {
 }
 
 func wrongRegion(e *sigv4.Error) APIError {
-	message := "the region '" + e.Region + "' is wrong"
-	if e.Expires.IsZero() {
-		return New(CodeAuthorizationHeaderMalformed, message)
-	}
-	return New(CodeAuthorizationQueryParametersError, message)
+	return New(CodeAuthorizationHeaderMalformed, "the region '"+e.Region+"' is wrong")
 }
 
 func skewed(e *sigv4.Error) APIError {

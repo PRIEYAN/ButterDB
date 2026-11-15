@@ -224,7 +224,6 @@ func TestMapSigV4Reasons(t *testing.T) {
 		{"header malformed", sigv4.Error{Reason: sigv4.ReasonHeaderMalformed}, CodeAuthorizationHeaderMalformed, 400},
 		{"query malformed", sigv4.Error{Reason: sigv4.ReasonQueryMalformed}, CodeAuthorizationQueryParametersError, 400},
 		{"wrong region header", sigv4.Error{Reason: sigv4.ReasonWrongRegion, Region: "eu-west-1"}, CodeAuthorizationHeaderMalformed, 400},
-		{"wrong region presigned", sigv4.Error{Reason: sigv4.ReasonWrongRegion, Region: "eu-west-1", Expires: served}, CodeAuthorizationQueryParametersError, 400},
 		{"skew", sigv4.Error{Reason: sigv4.ReasonSkew, RequestTime: served, ServerTime: served}, CodeRequestTimeTooSkewed, 403},
 		{"expired", sigv4.Error{Reason: sigv4.ReasonExpired, Expires: served, ServerTime: served}, CodeAccessDenied, 403},
 		{"not yet valid", sigv4.Error{Reason: sigv4.ReasonNotYetValid}, CodeAccessDenied, 403},

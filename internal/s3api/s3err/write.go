@@ -10,6 +10,7 @@ func Write(w http.ResponseWriter, r *http.Request, e APIError) {
 	if e.Status == 0 {
 		e.Status = StatusOf(e.Code)
 	}
+	e = presignedVariant(e, r)
 	requestID, hostID := RequestIDs(w.Header())
 	header := w.Header()
 	header.Set(HeaderRequestID, requestID)
@@ -45,4 +46,12 @@ func bodyless(r *http.Request, status int) bool {
 func wholeSeconds(d time.Duration) int64 {
 	seconds := int64((d + time.Second - 1) / time.Second)
 	return max(seconds, 1)
+}
+
+func presignedVariant(e APIError, r *http.Request) APIError {
+	if e.Code != CodeAuthorizationHeaderMalformed || r == nil || !r.URL.Query().Has("X-Amz-Algorithm") {
+		return e
+	}
+	e.Code = CodeAuthorizationQueryParametersError
+	return e
 }
