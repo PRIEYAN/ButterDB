@@ -698,6 +698,7 @@ func TestNewRejectsMissingDependencies(t *testing.T) {
 		"projector": func(d *Dependencies) { d.Projector = nil },
 		"messages":  func(d *Dependencies) { d.Messages = nil },
 		"clock":     func(d *Dependencies) { d.Clock = nil },
+		"key locks": func(d *Dependencies) { d.KeyLocks = nil },
 		"logger":    func(d *Dependencies) { d.Logger = nil },
 		"budget":    func(d *Dependencies) { d.Config.RequestBudget = 0 },
 	}

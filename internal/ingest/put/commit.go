@@ -54,7 +54,7 @@ func (s *Putter) commitJob(ctx context.Context, job *jobrepo.UploadJob, budget a
 }
 
 func (s *Putter) commitLocked(ctx context.Context, job *jobrepo.UploadJob, budget admission.Budget, mode commitMode) (committedPut, error) {
-	release, err := s.locker.Lock(ctx, objectLockKey(job.BucketChannelID, job.ObjectKey))
+	release, err := s.deps.KeyLocks.Lock(ctx, job.BucketChannelID, job.ObjectKey)
 	if err != nil {
 		return committedPut{}, err
 	}

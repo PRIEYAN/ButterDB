@@ -538,7 +538,7 @@ func newWorld(t *testing.T, defaultEncryption string) *world {
 		Authority: w.authority, Gates: w.gate, Objects: objects, Keys: fakeKeys{}, Unwrap: w.unwrap,
 		Peers: w.sender, Bodies: w.sender, Controls: w.sender, Deleter: w.sender, Messages: w.sender,
 		Projector: projector, Writer: db, Cleanup: w.cleanup, StableRandomID: stableRandomID,
-		Clock: clk, Random: &counterReader{}, Logger: discardLogger(),
+		KeyLocks: NewKeyLocks(), Clock: clk, Random: &counterReader{}, Logger: discardLogger(),
 		Config: Config{RequestBudget: 30 * time.Second, KEKFingerprint: testFingerprint, ActorUserID: testUserID},
 	}
 	w.svc, err = New(w.deps)

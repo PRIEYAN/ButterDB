@@ -1,6 +1,7 @@
 package put
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -107,5 +108,63 @@ func TestKeyedLockerHonorsCanceledWait(t *testing.T) {
 	}
 	if got := locker.Len(); got != 1 {
 		t.Fatalf("lock entries after canceled waiter = %d, want 1 held entry", got)
+	}
+}
+
+func TestSharedKeyLocksSerializeWritersOfOneKeyAcrossPutters(t *testing.T) {
+	w := newWorld(t, "none")
+	second, err := New(w.deps)
+	if err != nil {
+		t.Fatalf("second putter: %v", err)
+	}
+	external, err := w.deps.KeyLocks.Lock(w.ctx, testChannelID, "shared.txt")
+	if err != nil {
+		t.Fatalf("external lock: %v", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			external()
+		}
+	}()
+
+	services := []Service{w.svc, second}
+	done := make(chan error, len(services))
+	for index, service := range services {
+		body := []byte{byte('a' + index), 'b', 'c'}
+		go func() {
+			_, putErr := service.Put(w.ctx, w.putRequest("shared.txt", len(body)), bytes.NewReader(body))
+			done <- putErr
+		}()
+	}
+	select {
+	case err := <-done:
+		t.Fatalf("put finished while another writer held the key lock: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if got := len(w.sentControls()); got != 0 {
+		t.Fatalf("controls sent while key lock was held = %d, want 0", got)
+	}
+
+	other, err := w.deps.KeyLocks.Lock(w.ctx, testChannelID, "other.txt")
+	if err != nil {
+		t.Fatalf("other key lock: %v", err)
+	}
+	other()
+
+	released = true
+	external()
+	for range services {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("put after release: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("put did not finish after the key lock was released")
+		}
+	}
+	if got := len(w.sentControls()); got != 2 {
+		t.Fatalf("controls sent = %d, want 2", got)
 	}
 }

@@ -22,6 +22,18 @@ type heldLock struct {
 	entry *lockEntry
 }
 
+type ObjectKeyLocks struct {
+	locker *KeyedLocker
+}
+
+func NewKeyLocks() *ObjectKeyLocks {
+	return &ObjectKeyLocks{locker: NewKeyedLocker()}
+}
+
+func (o *ObjectKeyLocks) Lock(ctx context.Context, bucketChannelID int64, key string) (func(), error) {
+	return o.locker.Lock(ctx, objectLockKey(bucketChannelID, key))
+}
+
 func NewKeyedLocker() *KeyedLocker {
 	return &KeyedLocker{entries: make(map[string]*lockEntry)}
 }

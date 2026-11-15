@@ -144,6 +144,10 @@ type Config struct {
 	ActorUserID    int64
 }
 
+type KeyLocks interface {
+	Lock(ctx context.Context, bucketChannelID int64, key string) (release func(), err error)
+}
+
 type Dependencies struct {
 	Spool          SpoolStore
 	Admission      Admission
@@ -163,6 +167,7 @@ type Dependencies struct {
 	Writer         projection.Writer
 	Cleanup        ingest.CleanupDrainer
 	StableRandomID StableRandomIDFunc
+	KeyLocks       KeyLocks
 	Clock          clock.Clock
 	Random         io.Reader
 	Logger         *slog.Logger
@@ -210,6 +215,8 @@ func (d Dependencies) validate() error {
 		return missing("cleanup")
 	case d.StableRandomID == nil:
 		return missing("stable random id")
+	case d.KeyLocks == nil:
+		return missing("key locks")
 	case d.Clock == nil:
 		return missing("clock")
 	case d.Random == nil:
