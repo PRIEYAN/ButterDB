@@ -55,7 +55,7 @@ func TestDifferenceAppliesDeletionsAndSkipsExistenceCheck(t *testing.T) {
 	if err := e.service.Sync(e.ctx, bucketChannel); err != nil {
 		t.Fatalf("difference sync: %v", err)
 	}
-	if got := e.count(`SELECT COUNT(*) FROM deleted_messages WHERE channel_id = ? AND msg_id = 10 AND source = 'external' AND recorded_at = 1700000500`, bucketChannel); got != 1 {
+	if got := e.count(`SELECT COUNT(*) FROM deleted_messages WHERE channel_id = ? AND msg_id = 10 AND source = 'external' AND recorded_at = 1700000500000`, bucketChannel); got != 1 {
 		t.Fatalf("external deletion rows = %d, want 1", got)
 	}
 	if got := e.livePut("x.png"); got != 0 {

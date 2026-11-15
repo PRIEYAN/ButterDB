@@ -356,8 +356,18 @@ func TestMissingBodyRemovesObject(t *testing.T) {
 	if got := e.deleted(t); len(got) != 1 || got[body] != "reconcile" {
 		t.Fatalf("deleted_messages = %v, want only the body as reconcile (put %d still exists)", got, put)
 	}
-	if got := e.lastReconciled(t); got != e.world.clock.Now().Unix() {
-		t.Fatalf("last_reconciled_at = %d, want %d", got, e.world.clock.Now().Unix())
+	if got := e.lastReconciled(t); got != e.world.clock.Now().UnixMilli() {
+		t.Fatalf("last_reconciled_at = %d, want %d", got, e.world.clock.Now().UnixMilli())
+	}
+	var recordedAt int64
+	err = e.db.Read(context.Background(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), `SELECT recorded_at FROM deleted_messages WHERE channel_id = ?1 AND msg_id = ?2`, e.peer.ChannelID, body).Scan(&recordedAt)
+	})
+	if err != nil {
+		t.Fatalf("read recorded_at: %v", err)
+	}
+	if recordedAt != e.world.clock.Now().UnixMilli() {
+		t.Fatalf("recorded_at = %d, want %d milliseconds", recordedAt, e.world.clock.Now().UnixMilli())
 	}
 }
 
@@ -508,8 +518,8 @@ func TestReconcileDeletionsRunsAtMostOncePerDay(t *testing.T) {
 	if err != nil || res.Skipped || res.Checked != 2 {
 		t.Fatalf("pass after 24h = %+v %v, want a full check", res, err)
 	}
-	if e.lastReconciled(t) != e.world.clock.Now().Unix() {
-		t.Fatalf("last_reconciled_at = %d, want %d", e.lastReconciled(t), e.world.clock.Now().Unix())
+	if e.lastReconciled(t) != e.world.clock.Now().UnixMilli() {
+		t.Fatalf("last_reconciled_at = %d, want %d", e.lastReconciled(t), e.world.clock.Now().UnixMilli())
 	}
 }
 

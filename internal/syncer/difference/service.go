@@ -220,7 +220,7 @@ func (s *Service) recordDeleted(ctx context.Context, channelID int64, msgIDs []i
 }
 
 func (s *Service) writeDeleted(ctx context.Context, channelID int64, msgIDs []int64) error {
-	recordedAt := s.deps.Clock.Now().Unix()
+	recordedAt := s.deps.Clock.Now().UnixMilli()
 	return s.deps.Writer.Write(ctx, func(tx *sql.Tx) error {
 		removed, err := s.deps.Deletions.RecordDeletedTx(ctx, tx, channelID, msgIDs, syncer.DeletedExternal, recordedAt)
 		if err != nil {

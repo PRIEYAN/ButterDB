@@ -84,7 +84,7 @@ func (r *Reconciler) ReconcileDeletions(ctx context.Context, channelID int64) (R
 		return Result{}, fmt.Errorf("reconcile: channel %d: %w", channelID, syncer.ErrUnknownChannel)
 	}
 	now := r.deps.Clock.Now()
-	if state.Deleted || (state.LastReconciledAt > 0 && now.Sub(time.Unix(state.LastReconciledAt, 0)) < MinInterval) {
+	if state.Deleted || (state.LastReconciledAt > 0 && now.Sub(time.UnixMilli(state.LastReconciledAt)) < MinInterval) {
 		return Result{Skipped: true}, nil
 	}
 
@@ -106,14 +106,14 @@ func (r *Reconciler) ReconcileDeletions(ctx context.Context, channelID int64) (R
 	}
 	result := Result{Checked: len(ids), MissingMsgIDs: missing}
 	if len(missing) > 0 {
-		removed, err := r.record(ctx, channelID, missing, now.Unix())
+		removed, err := r.record(ctx, channelID, missing, now.UnixMilli())
 		if err != nil {
 			return Result{}, err
 		}
 		result.RemovedKeys = removed
 		r.deps.Logger.Warn("reconcile: backing messages deleted on telegram", "channel_id", channelID, "missing", len(missing), "removed_objects", len(removed))
 	}
-	if err := r.deps.Cursors.SetLastReconciledAt(ctx, channelID, now.Unix()); err != nil {
+	if err := r.deps.Cursors.SetLastReconciledAt(ctx, channelID, now.UnixMilli()); err != nil {
 		return Result{}, fmt.Errorf("reconcile: store last reconciled time: %w", err)
 	}
 	return result, nil
