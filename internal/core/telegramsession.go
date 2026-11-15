@@ -20,6 +20,7 @@ var ErrAppNotStarted = errors.New("core: app not started")
 
 type TelegramSession struct {
 	*Telegram
+	app      *App
 	ring     *keyring.Ring
 	control  *sqlitedb.DB
 	accounts *accountrepo.Repository
@@ -71,7 +72,7 @@ func (a *App) assembleSession(ctx context.Context, role identity.Role, ring *key
 	if err != nil {
 		return nil, err
 	}
-	return &TelegramSession{Telegram: telegram, ring: ring, control: control, accounts: accounts}, nil
+	return &TelegramSession{Telegram: telegram, app: a, ring: ring, control: control, accounts: accounts}, nil
 }
 
 func (s *TelegramSession) Close(ctx context.Context) error {

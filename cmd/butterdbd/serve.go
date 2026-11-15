@@ -33,6 +33,12 @@ func (a *application) runServe(ctx context.Context, args []string) int {
 		a.fail(err)
 		return exitCodeFor(err)
 	}
+	if err := app.VerifyLocalState(ctx); err != nil {
+		a.fail(err)
+		code := exitCodeFor(err)
+		a.closeApp(app, cfg.Shutdown.TotalTimeout.Std())
+		return code
+	}
 	app.Logger().Info("serve started", "component", "lifecycle", "data_dir", app.DataDir().Path())
 	<-ctx.Done()
 	return a.shutdown(app, cfg.Shutdown.TotalTimeout.Std())

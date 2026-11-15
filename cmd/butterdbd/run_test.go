@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/PRIEYAN/ButterDB/internal/core"
 	tgidentity "github.com/PRIEYAN/ButterDB/internal/identity"
 	"github.com/PRIEYAN/ButterDB/internal/platform/config"
 	"github.com/PRIEYAN/ButterDB/internal/platform/datadir"
@@ -82,6 +84,8 @@ func TestExitCodeFor(t *testing.T) {
 		{"joined lock failure", errors.Join(errors.New("other"), processlock.ErrAlreadyRunning), exitLocked},
 		{"telegram flood wait", fmt.Errorf("core: setup: %w", tgclient.ErrFloodWait), exitTelegram},
 		{"telegram unavailable", fmt.Errorf("x: %w", tgidentity.ErrTelegramUnavailable), exitTelegram},
+		{"key or registry check", fmt.Errorf("core: %w", core.ErrKeyOrRegistry), exitKey},
+		{"incompatible data", fmt.Errorf("core: %w", core.ErrIncompatibleData), exitIncompat},
 		{"anything else", errors.New("boom"), exitFailure},
 	}
 	for _, tc := range cases {
@@ -144,5 +148,23 @@ func TestServeRejectsInvalidConfiguration(t *testing.T) {
 	}
 	if !strings.Contains(ta.stderr.String(), "BUTTERDB_NOT_A_KEY") {
 		t.Fatalf("stderr %q does not name the variable", ta.stderr.String())
+	}
+}
+
+func TestServeRefusesInvalidStateFile(t *testing.T) {
+	dir := privateTempDir(t)
+	keyFile := writeKeyFile(t, dir, 0o600)
+	if err := os.WriteFile(filepath.Join(dir, stateFileName), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ta := newTestApp([]string{"BUTTERDB_DATA_DIR=" + dir, "BUTTERDB_SERVER_KEY_FILE=" + keyFile})
+	if code := ta.app.run(context.Background(), []string{"serve"}); code != exitKey {
+		t.Fatalf("exit %d, want %d (stderr %q)", code, exitKey, ta.stderr.String())
+	}
+	if !strings.Contains(ta.stderr.String(), "state_invalid") {
+		t.Fatalf("stderr %q does not name the reason", ta.stderr.String())
+	}
+	if strings.Contains(ta.stdout.String(), "serve started") {
+		t.Fatalf("serve started despite a failed startup check: %q", ta.stdout.String())
 	}
 }
