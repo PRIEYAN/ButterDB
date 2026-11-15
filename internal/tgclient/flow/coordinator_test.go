@@ -260,9 +260,9 @@ func TestWriteCoordinatorConvertsGotdFloodWaitAndRecordsIt(t *testing.T) {
 	if !errors.As(err, &typed) || typed.Duration != 9*time.Second {
 		t.Fatalf("Do error = %v, want *FloodWaitError of 9s", err)
 	}
-	coordinator.mu.Lock()
-	blockedUntil := coordinator.blockedUntil
-	coordinator.mu.Unlock()
+	coordinator.shared.mu.Lock()
+	blockedUntil := coordinator.shared.blockedUntil
+	coordinator.shared.mu.Unlock()
 	if want := fake.Now().Add(9 * time.Second); !blockedUntil.Equal(want) {
 		t.Fatalf("blockedUntil = %v, want %v", blockedUntil, want)
 	}
@@ -360,10 +360,149 @@ func TestWriteCoordinatorRecordsTypedFloodWaitAndReturnsIt(t *testing.T) {
 	if !errors.Is(err, tgclient.ErrFloodWait) {
 		t.Fatalf("Do error %v does not match ErrFloodWait", err)
 	}
-	coordinator.mu.Lock()
-	blockedUntil := coordinator.blockedUntil
-	coordinator.mu.Unlock()
+	coordinator.shared.mu.Lock()
+	blockedUntil := coordinator.shared.blockedUntil
+	coordinator.shared.mu.Unlock()
 	if want := fake.Now().Add(12 * time.Second); !blockedUntil.Equal(want) {
 		t.Fatalf("blockedUntil = %v, want %v", blockedUntil, want)
+	}
+}
+
+func TestPrepacedWriteCoordinatorDoesNotConsumeLimiterTokens(t *testing.T) {
+	t.Parallel()
+
+	fake := clock.NewFake(time.Unix(1_700_000_000, 0))
+	sleeper := newScriptedSleeper()
+	limiter, err := NewSendLimiterWithClock(fake, sleeper, 1, 1, 1, 1)
+	if err != nil {
+		t.Fatalf("NewSendLimiterWithClock: %v", err)
+	}
+	coordinator, err := NewWriteCoordinator(WriteCoordinatorDeps{Clock: fake, Sleeper: sleeper, Limiter: limiter})
+	if err != nil {
+		t.Fatalf("NewWriteCoordinator: %v", err)
+	}
+	view := coordinator.Prepaced()
+	noop := func() error { return nil }
+	for _, class := range []tgclient.WriteClass{tgclient.WriteControl, tgclient.WriteDelete, tgclient.WriteChannel, tgclient.WriteDocument} {
+		if err := view.Do(context.Background(), class, noop); err != nil {
+			t.Fatalf("view Do class %d: %v", class, err)
+		}
+	}
+	for _, class := range []SendClass{SendControl, SendDocument} {
+		delay, cancel := limiter.Reserve(class)
+		cancel()
+		if delay != 0 {
+			t.Fatalf("limiter class %d delay after view sends = %s, want 0", class, delay)
+		}
+	}
+	if err := coordinator.Do(context.Background(), tgclient.WriteControl, noop); err != nil {
+		t.Fatalf("original Do: %v", err)
+	}
+	if delay, cancel := limiter.Reserve(SendControl); delay <= 0 {
+		t.Fatalf("limiter delay after original send = %s, want a wait", delay)
+	} else {
+		cancel()
+	}
+}
+
+func TestPrepacedWriteCoordinatorSharesFloodWaitWithOriginal(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		record   func(*WriteCoordinator) *WriteCoordinator
+		observer func(*WriteCoordinator) *WriteCoordinator
+	}{
+		{
+			name:     "recorded through the view blocks the original",
+			record:   func(c *WriteCoordinator) *WriteCoordinator { return c.Prepaced() },
+			observer: func(c *WriteCoordinator) *WriteCoordinator { return c },
+		},
+		{
+			name:     "recorded through the original blocks the view",
+			record:   func(c *WriteCoordinator) *WriteCoordinator { return c },
+			observer: func(c *WriteCoordinator) *WriteCoordinator { return c.Prepaced() },
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Unix(1_700_000_000, 0)
+			coordinator, fake, sleeper := newTestCoordinator(t, start)
+			err := tt.record(coordinator).Do(context.Background(), tgclient.WriteControl, func() error {
+				return newFloodWait(6 * time.Second)
+			})
+			if !errors.Is(err, tgclient.ErrFloodWait) {
+				t.Fatalf("record error = %v, want flood wait", err)
+			}
+
+			acted := make(chan struct{}, 1)
+			result := make(chan error, 1)
+			go func() {
+				result <- tt.observer(coordinator).Do(context.Background(), tgclient.WriteDocument, func() error {
+					acted <- struct{}{}
+					return nil
+				})
+			}()
+			if wait := <-sleeper.started; wait != 6*time.Second {
+				t.Fatalf("cooldown wait = %s, want 6s", wait)
+			}
+			assertNoCoordinatorAction(t, acted, "observer")
+
+			fake.Set(start.Add(6 * time.Second))
+			sleeper.release <- struct{}{}
+			<-acted
+			if err := <-result; err != nil {
+				t.Fatalf("observer after cooldown: %v", err)
+			}
+		})
+	}
+}
+
+func TestPrepacedWriteCoordinatorSerializesOnTheSameSlot(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		coordinator, _, _ := newTestCoordinator(t, time.Unix(1_700_000_000, 0))
+		view := coordinator.Prepaced()
+
+		firstEntered := make(chan struct{})
+		releaseFirst := make(chan struct{})
+		firstResult := make(chan error, 1)
+		go func() {
+			firstResult <- coordinator.Do(context.Background(), tgclient.WriteControl, func() error {
+				close(firstEntered)
+				<-releaseFirst
+				return nil
+			})
+		}()
+		<-firstEntered
+
+		secondAction := make(chan struct{}, 1)
+		secondResult := make(chan error, 1)
+		go func() {
+			secondResult <- view.Do(context.Background(), tgclient.WriteDelete, func() error {
+				secondAction <- struct{}{}
+				return nil
+			})
+		}()
+		synctest.Wait()
+		assertNoCoordinatorAction(t, secondAction, "view message behind original")
+
+		close(releaseFirst)
+		if err := <-firstResult; err != nil {
+			t.Fatalf("original message: %v", err)
+		}
+		<-secondAction
+		if err := <-secondResult; err != nil {
+			t.Fatalf("view message: %v", err)
+		}
+	})
+}
+
+func TestPrepacedWriteCoordinatorSatisfiesWriteGate(t *testing.T) {
+	t.Parallel()
+
+	coordinator, _, _ := newTestCoordinator(t, time.Unix(1_700_000_000, 0))
+	var gate tgclient.WriteGate = coordinator.Prepaced()
+	if err := gate.Do(context.Background(), tgclient.WriteControl, func() error { return nil }); err != nil {
+		t.Fatalf("gate Do: %v", err)
 	}
 }

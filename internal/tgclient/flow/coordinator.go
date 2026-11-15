@@ -25,6 +25,11 @@ type WriteCoordinator struct {
 	sleeper Sleeper
 	limiter *SendLimiter
 
+	prepaced bool
+	shared   *coordinatorState
+}
+
+type coordinatorState struct {
 	messageSlot  chan struct{}
 	documentSlot chan struct{}
 
@@ -43,12 +48,20 @@ func NewWriteCoordinator(deps WriteCoordinatorDeps) (*WriteCoordinator, error) {
 		return nil, fmt.Errorf("flow: %w: limiter", errs.ErrMissingDependency)
 	}
 	return &WriteCoordinator{
-		clock:        deps.Clock,
-		sleeper:      deps.Sleeper,
-		limiter:      deps.Limiter,
-		messageSlot:  make(chan struct{}, 1),
-		documentSlot: make(chan struct{}, 1),
+		clock:   deps.Clock,
+		sleeper: deps.Sleeper,
+		limiter: deps.Limiter,
+		shared: &coordinatorState{
+			messageSlot:  make(chan struct{}, 1),
+			documentSlot: make(chan struct{}, 1),
+		},
 	}, nil
+}
+
+func (c *WriteCoordinator) Prepaced() *WriteCoordinator {
+	view := *c
+	view.prepaced = true
+	return &view
 }
 
 func (c *WriteCoordinator) Do(ctx context.Context, class tgclient.WriteClass, action func() error) error {
@@ -83,9 +96,9 @@ func (c *WriteCoordinator) Do(ctx context.Context, class tgclient.WriteClass, ac
 func (c *WriteCoordinator) routeFor(class tgclient.WriteClass) (chan struct{}, SendClass, error) {
 	switch class {
 	case tgclient.WriteControl, tgclient.WriteDelete, tgclient.WriteChannel:
-		return c.messageSlot, SendControl, nil
+		return c.shared.messageSlot, SendControl, nil
 	case tgclient.WriteDocument:
-		return c.documentSlot, SendDocument, nil
+		return c.shared.documentSlot, SendDocument, nil
 	default:
 		return nil, 0, fmt.Errorf("%w: unknown write class %d", ErrInvalidWriteRequest, class)
 	}
@@ -95,20 +108,22 @@ func (c *WriteCoordinator) waitForTurn(ctx context.Context, sendClass SendClass)
 	if err := c.waitForCooldown(ctx); err != nil {
 		return err
 	}
-	if err := c.limiter.Wait(ctx, sendClass); err != nil {
-		return err
-	}
-	if err := c.waitForCooldown(ctx); err != nil {
-		return err
+	if !c.prepaced {
+		if err := c.limiter.Wait(ctx, sendClass); err != nil {
+			return err
+		}
+		if err := c.waitForCooldown(ctx); err != nil {
+			return err
+		}
 	}
 	return ctx.Err()
 }
 
 func (c *WriteCoordinator) waitForCooldown(ctx context.Context) error {
 	for {
-		c.mu.Lock()
-		wait := c.blockedUntil.Sub(c.clock.Now())
-		c.mu.Unlock()
+		c.shared.mu.Lock()
+		wait := c.shared.blockedUntil.Sub(c.clock.Now())
+		c.shared.mu.Unlock()
 		if wait <= 0 {
 			return nil
 		}
@@ -124,9 +139,9 @@ func (c *WriteCoordinator) observe(err error) {
 		return
 	}
 	deadline := c.clock.Now().Add(wait)
-	c.mu.Lock()
-	if deadline.After(c.blockedUntil) {
-		c.blockedUntil = deadline
+	c.shared.mu.Lock()
+	if deadline.After(c.shared.blockedUntil) {
+		c.shared.blockedUntil = deadline
 	}
-	c.mu.Unlock()
+	c.shared.mu.Unlock()
 }
