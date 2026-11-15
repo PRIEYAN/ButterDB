@@ -160,12 +160,15 @@ func (f fakeUploads) LookupUpload(_ context.Context, id string) (UploadRecord, e
 }
 
 type fakeAuthorizer struct {
+	mu      sync.Mutex
 	infos   map[bucket.BucketName]bucket.Info
 	actions []access.Action
 }
 
 func (f *fakeAuthorizer) Authorize(_ context.Context, p policy.Principal, b bucket.BucketName, a access.Action) (bucket.Info, error) {
+	f.mu.Lock()
 	f.actions = append(f.actions, a)
+	f.mu.Unlock()
 	if !p.Key.Scope.Allows(string(b), a) {
 		return bucket.Info{}, errs.ErrAccessDenied
 	}
@@ -400,4 +403,18 @@ func mustDecodeHex(text string) []byte {
 
 func partOfSize(number int, size int64) multipartstage.Part {
 	return multipartstage.Part{Number: number, Size: size, ETag: strings.Repeat("0", 32), StagedAt: testNow}
+}
+
+func decodeResult[T any](t *testing.T, body []byte, root string) T {
+	t.Helper()
+	text := string(body)
+	index := strings.Index(text, "<"+root)
+	if index < 0 {
+		t.Fatalf("root %s missing in %s", root, text)
+	}
+	var result T
+	if err := xml.Unmarshal([]byte(text[index:]), &result); err != nil {
+		t.Fatalf("decode %s: %v", root, err)
+	}
+	return result
 }

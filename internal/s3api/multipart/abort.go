@@ -2,7 +2,6 @@ package multipart
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/PRIEYAN/ButterDB/internal/access/sigv4"
@@ -17,12 +16,7 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 		h.fail(w, r, rt, err)
 		return
 	}
-	uploadID := r.URL.Query().Get(uploadIDQuery)
-	if uploadID == "" {
-		h.fail(w, r, rt, fmt.Errorf("multipart: upload id is required: %w", errs.ErrNoSuchUpload))
-		return
-	}
-	record, err := h.lookupUpload(r.Context(), rt, uploadID)
+	record, err := h.lookupRequestedUpload(r, rt)
 	if err != nil {
 		h.fail(w, r, rt, err)
 		return
@@ -31,7 +25,7 @@ func (h *Handlers) AbortMultipartUpload(w http.ResponseWriter, r *http.Request, 
 		h.fail(w, r, rt, abortError(err))
 		return
 	}
-	if err := h.deps.Stage.Abort(r.Context(), uploadID); err != nil {
+	if err := h.deps.Stage.Abort(r.Context(), record.ID); err != nil {
 		h.fail(w, r, rt, abortError(err))
 		return
 	}

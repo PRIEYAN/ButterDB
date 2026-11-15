@@ -82,10 +82,11 @@ func NewHandlers(deps Dependencies) (*Handlers, error) {
 
 func (h *Handlers) Routes() map[router.Operation]router.HandlerFunc {
 	return map[router.Operation]router.HandlerFunc{
-		router.OpCreateMultipartUpload: h.CreateMultipartUpload,
-		router.OpUploadPart:            h.UploadPart,
-		router.OpUploadPartCopy:        h.UploadPartCopy,
-		router.OpAbortMultipartUpload:  h.AbortMultipartUpload,
+		router.OpCreateMultipartUpload:   h.CreateMultipartUpload,
+		router.OpUploadPart:              h.UploadPart,
+		router.OpUploadPartCopy:          h.UploadPartCopy,
+		router.OpAbortMultipartUpload:    h.AbortMultipartUpload,
+		router.OpCompleteMultipartUpload: h.CompleteMultipartUpload,
 	}
 }
 
@@ -133,6 +134,14 @@ func (h *Handlers) lookupUpload(ctx context.Context, rt router.Route, uploadID s
 		return UploadRecord{}, fmt.Errorf("multipart: upload %s: %w", uploadID, errs.ErrNoSuchUpload)
 	}
 	return record, nil
+}
+
+func (h *Handlers) lookupRequestedUpload(r *http.Request, rt router.Route) (UploadRecord, error) {
+	uploadID := r.URL.Query().Get(uploadIDQuery)
+	if uploadID == "" {
+		return UploadRecord{}, fmt.Errorf("multipart: upload id is required: %w", errs.ErrNoSuchUpload)
+	}
+	return h.lookupUpload(r.Context(), rt, uploadID)
 }
 
 func requireOpenUpload(record UploadRecord) error {

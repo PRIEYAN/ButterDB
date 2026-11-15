@@ -1,13 +1,11 @@
 package multipart
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 
 	"github.com/PRIEYAN/ButterDB/internal/access/sigv4"
 	"github.com/PRIEYAN/ButterDB/internal/domain/access"
-	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/domain/object"
 	"github.com/PRIEYAN/ButterDB/internal/s3api/router"
 )
@@ -45,11 +43,7 @@ type stagingJob struct {
 }
 
 func (h *Handlers) openUpload(r *http.Request, rt router.Route) (UploadRecord, error) {
-	uploadID := r.URL.Query().Get(uploadIDQuery)
-	if uploadID == "" {
-		return UploadRecord{}, fmt.Errorf("multipart: upload id is required: %w", errs.ErrNoSuchUpload)
-	}
-	record, err := h.lookupUpload(r.Context(), rt, uploadID)
+	record, err := h.lookupRequestedUpload(r, rt)
 	if err != nil {
 		return UploadRecord{}, err
 	}
