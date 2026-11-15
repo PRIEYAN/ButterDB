@@ -10,8 +10,13 @@ import (
 
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/platform/clock"
+	"github.com/PRIEYAN/ButterDB/internal/platform/fsx"
 	"github.com/PRIEYAN/ButterDB/internal/storage/jobrepo"
 )
+
+type unreadableFS struct {
+	fsx.FS
+}
 
 func TestNewRejectsMissingDependencies(t *testing.T) {
 	base := newHarness(t)
@@ -26,7 +31,7 @@ func TestNewRejectsMissingDependencies(t *testing.T) {
 		{name: "no clock", mutate: func(d *Dependencies) { d.Clock = nil }},
 		{name: "no random", mutate: func(d *Dependencies) { d.Random = nil }},
 		{name: "no fs", mutate: func(d *Dependencies) { d.FS = nil }},
-		{name: "fs that cannot open files", mutate: func(d *Dependencies) { d.FS = base.fs.Rooted }},
+		{name: "fs that cannot open files", mutate: func(d *Dependencies) { d.FS = unreadableFS{FS: base.fs.Rooted} }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
