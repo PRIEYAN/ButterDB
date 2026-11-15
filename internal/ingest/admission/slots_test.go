@@ -7,14 +7,13 @@ import (
 	"time"
 
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
-	"github.com/PRIEYAN/ButterDB/internal/domain/object"
 	"github.com/PRIEYAN/ButterDB/internal/platform/clock"
 )
 
-func acquireAsync(c *Controller, ctx context.Context, b Budget, channel int64, key object.Key) <-chan acquireResult {
+func acquireAsync(c *Controller, ctx context.Context, b Budget, scope string) <-chan acquireResult {
 	out := make(chan acquireResult, 1)
 	go func() {
-		release, err := c.AcquirePut(ctx, b, channel, key)
+		release, err := c.AcquirePut(ctx, b, scope)
 		out <- acquireResult{release: release, err: err}
 	}()
 	return out
@@ -30,15 +29,15 @@ func TestSlotsFIFO(t *testing.T) {
 	c, clk := newTestController(t, Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}, sleeper)
 	budget := NewBudget(clk.Now(), 30*time.Second)
 
-	holder, err := c.AcquirePut(context.Background(), budget, 1, "holder")
+	holder, err := c.AcquirePut(context.Background(), budget, "key:holder")
 	if err != nil {
 		t.Fatalf("holder acquire: %v", err)
 	}
 
-	keys := []object.Key{"a", "b", "c", "d"}
+	keys := []string{"key:a", "key:b", "key:c", "key:d"}
 	results := make([]<-chan acquireResult, len(keys))
 	for i, key := range keys {
-		results[i] = acquireAsync(c, context.Background(), budget, 1, key)
+		results[i] = acquireAsync(c, context.Background(), budget, key)
 		sleeper.awaitStarted(t)
 	}
 
@@ -62,13 +61,12 @@ func TestSlotsFIFO(t *testing.T) {
 func TestPerKeyLimit(t *testing.T) {
 	tests := []struct {
 		name         string
-		sameChannel  bool
-		secondKey    object.Key
+		secondScope  string
 		wantBlocking bool
 	}{
-		{"same key in same bucket blocks", true, "hot", true},
-		{"same key name in other bucket proceeds", false, "hot", false},
-		{"other key in same bucket proceeds", true, "cold", false},
+		{"same access key blocks", "key:AKIAHOT", true},
+		{"other access key proceeds", "key:AKIACOLD", false},
+		{"admin device with the same id proceeds", "device:AKIAHOT", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,15 +74,11 @@ func TestPerKeyLimit(t *testing.T) {
 			c, clk := newTestController(t, Config{MaxConcurrentPuts: 4, MaxConcurrentPutsPerKey: 1}, sleeper)
 			budget := NewBudget(clk.Now(), 30*time.Second)
 
-			first, err := c.AcquirePut(context.Background(), budget, 1, "hot")
+			first, err := c.AcquirePut(context.Background(), budget, "key:AKIAHOT")
 			if err != nil {
 				t.Fatalf("first acquire: %v", err)
 			}
-			channel := int64(1)
-			if !tt.sameChannel {
-				channel = 2
-			}
-			second := acquireAsync(c, context.Background(), budget, channel, tt.secondKey)
+			second := acquireAsync(c, context.Background(), budget, tt.secondScope)
 			if !tt.wantBlocking {
 				got := receiveWithin(t, second)
 				if got.err != nil {
@@ -97,12 +91,12 @@ func TestPerKeyLimit(t *testing.T) {
 			sleeper.awaitStarted(t)
 			select {
 			case <-second:
-				t.Fatal("second acquire for the same key did not wait")
+				t.Fatal("second acquire for the same scope did not wait")
 			default:
 			}
-			other, err := c.AcquirePut(context.Background(), budget, 1, "cold")
+			other, err := c.AcquirePut(context.Background(), budget, "key:AKIACOLD")
 			if err != nil {
-				t.Fatalf("other key behind a hot key waiter: %v", err)
+				t.Fatalf("other scope behind a hot scope waiter: %v", err)
 			}
 			other()
 			first()
@@ -125,7 +119,7 @@ func TestSlotReleaseOnPanicPath(t *testing.T) {
 				t.Fatal("expected the panic to propagate")
 			}
 		}()
-		release, err := c.AcquirePut(context.Background(), budget, 1, "k")
+		release, err := c.AcquirePut(context.Background(), budget, "key:k")
 		if err != nil {
 			t.Fatalf("acquire: %v", err)
 		}
@@ -133,17 +127,17 @@ func TestSlotReleaseOnPanicPath(t *testing.T) {
 		panic("boom")
 	}()
 
-	release, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), 1, "k")
+	release, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), "key:k")
 	if err != nil {
 		t.Fatalf("slot was not returned after panic: %v", err)
 	}
 	release()
 	release()
-	again, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), 1, "k")
+	again, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), "key:k")
 	if err != nil {
 		t.Fatalf("slot unavailable after double release: %v", err)
 	}
-	if _, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), 1, "k"); err == nil {
+	if _, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), "key:k"); err == nil {
 		t.Fatal("double release freed a second slot")
 	}
 	again()
@@ -153,13 +147,13 @@ func TestBudgetExhaustedReturnsSlowDown(t *testing.T) {
 	t.Run("already exhausted budget does not wait", func(t *testing.T) {
 		sleeper := newBlockingSleeper()
 		c, clk := newTestController(t, Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}, sleeper)
-		held, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 30*time.Second), 1, "a")
+		held, err := c.AcquirePut(context.Background(), NewBudget(clk.Now(), 30*time.Second), "key:a")
 		if err != nil {
 			t.Fatalf("acquire: %v", err)
 		}
 		defer held()
 
-		_, err = c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), 1, "b")
+		_, err = c.AcquirePut(context.Background(), NewBudget(clk.Now(), 0), "key:b")
 		var slow *SlowDownError
 		if !errors.As(err, &slow) {
 			t.Fatalf("err = %v, want *SlowDownError", err)
@@ -178,12 +172,12 @@ func TestBudgetExhaustedReturnsSlowDown(t *testing.T) {
 		sleeper := newBlockingSleeper()
 		c, clk := newTestController(t, Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}, sleeper)
 		budget := NewBudget(clk.Now(), 30*time.Second)
-		held, err := c.AcquirePut(context.Background(), budget, 1, "a")
+		held, err := c.AcquirePut(context.Background(), budget, "key:a")
 		if err != nil {
 			t.Fatalf("acquire: %v", err)
 		}
 
-		waiting := acquireAsync(c, context.Background(), budget, 1, "b")
+		waiting := acquireAsync(c, context.Background(), budget, "key:b")
 		if wait := sleeper.awaitStarted(t); wait != 30*time.Second {
 			t.Fatalf("budget wait = %s, want 30s", wait)
 		}
@@ -194,7 +188,7 @@ func TestBudgetExhaustedReturnsSlowDown(t *testing.T) {
 		}
 
 		held()
-		next, err := c.AcquirePut(context.Background(), budget, 1, "c")
+		next, err := c.AcquirePut(context.Background(), budget, "key:c")
 		if err != nil {
 			t.Fatalf("abandoned waiter kept a slot: %v", err)
 		}
@@ -205,11 +199,11 @@ func TestBudgetExhaustedReturnsSlowDown(t *testing.T) {
 		sleeper := newBlockingSleeper()
 		c, clk := newTestController(t, Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}, sleeper)
 		budget := NewBudget(clk.Now(), 30*time.Second)
-		held, err := c.AcquirePut(context.Background(), budget, 1, "a")
+		held, err := c.AcquirePut(context.Background(), budget, "key:a")
 		if err != nil {
 			t.Fatalf("acquire: %v", err)
 		}
-		waiting := acquireAsync(c, context.Background(), budget, 1, "b")
+		waiting := acquireAsync(c, context.Background(), budget, "key:b")
 		sleeper.awaitStarted(t)
 		held()
 		got := receiveWithin(t, waiting)
@@ -250,12 +244,12 @@ func TestCancellationNotSlowDown(t *testing.T) {
 		sleeper := newBlockingSleeper()
 		c, clk := newTestController(t, Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}, sleeper)
 		budget := NewBudget(clk.Now(), 30*time.Second)
-		held, err := c.AcquirePut(context.Background(), budget, 1, "a")
+		held, err := c.AcquirePut(context.Background(), budget, "key:a")
 		if err != nil {
 			t.Fatalf("acquire: %v", err)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		waiting := acquireAsync(c, ctx, budget, 1, "b")
+		waiting := acquireAsync(c, ctx, budget, "key:b")
 		sleeper.awaitStarted(t)
 		cancel()
 		got := receiveWithin(t, waiting)
@@ -266,7 +260,7 @@ func TestCancellationNotSlowDown(t *testing.T) {
 			t.Fatal("cancellation mapped to SlowDown")
 		}
 		held()
-		next, err := c.AcquirePut(context.Background(), budget, 1, "c")
+		next, err := c.AcquirePut(context.Background(), budget, "key:c")
 		if err != nil {
 			t.Fatalf("cancelled waiter kept a slot: %v", err)
 		}
@@ -277,7 +271,7 @@ func TestCancellationNotSlowDown(t *testing.T) {
 		c, clk := newTestController(t, Config{MaxConcurrentPuts: 1, MaxConcurrentPutsPerKey: 1}, newBlockingSleeper())
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		_, err := c.AcquirePut(ctx, NewBudget(clk.Now(), 0), 1, "a")
+		_, err := c.AcquirePut(ctx, NewBudget(clk.Now(), 0), "key:a")
 		if !errors.Is(err, context.Canceled) || errors.Is(err, errs.ErrSlowDown) {
 			t.Fatalf("err = %v, want context.Canceled only", err)
 		}

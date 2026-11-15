@@ -3,17 +3,10 @@ package admission
 import (
 	"container/list"
 	"sync"
-
-	"github.com/PRIEYAN/ButterDB/internal/domain/object"
 )
 
-type slotKey struct {
-	bucketChannelID int64
-	key             object.Key
-}
-
 type slotWaiter struct {
-	key     slotKey
+	key     string
 	ready   chan struct{}
 	granted bool
 	element *list.Element
@@ -24,24 +17,24 @@ type slotTable struct {
 	size    int
 	perKey  int
 	held    int
-	keyHeld map[slotKey]int
+	keyHeld map[string]int
 	waiters list.List
 }
 
 func newSlotTable(size, perKey int) *slotTable {
-	return &slotTable{size: size, perKey: perKey, keyHeld: make(map[slotKey]int)}
+	return &slotTable{size: size, perKey: perKey, keyHeld: make(map[string]int)}
 }
 
-func (t *slotTable) canGrant(key slotKey) bool {
+func (t *slotTable) canGrant(key string) bool {
 	return t.held < t.size && t.keyHeld[key] < t.perKey
 }
 
-func (t *slotTable) grant(key slotKey) {
+func (t *slotTable) grant(key string) {
 	t.held++
 	t.keyHeld[key]++
 }
 
-func (t *slotTable) tryAcquire(key slotKey) bool {
+func (t *slotTable) tryAcquire(key string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.canGrant(key) {
@@ -51,7 +44,7 @@ func (t *slotTable) tryAcquire(key slotKey) bool {
 	return true
 }
 
-func (t *slotTable) enqueue(key slotKey) *slotWaiter {
+func (t *slotTable) enqueue(key string) *slotWaiter {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	w := &slotWaiter{key: key, ready: make(chan struct{})}
@@ -59,14 +52,14 @@ func (t *slotTable) enqueue(key slotKey) *slotWaiter {
 	return w
 }
 
-func (t *slotTable) release(key slotKey) {
+func (t *slotTable) release(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.returnSlot(key)
 	t.dispatch()
 }
 
-func (t *slotTable) returnSlot(key slotKey) {
+func (t *slotTable) returnSlot(key string) {
 	t.held--
 	t.keyHeld[key]--
 	if t.keyHeld[key] <= 0 {

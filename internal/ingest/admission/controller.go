@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
-	"github.com/PRIEYAN/ButterDB/internal/domain/object"
 	"github.com/PRIEYAN/ButterDB/internal/platform/clock"
 )
 
@@ -52,33 +51,32 @@ func New(deps Dependencies) (*Controller, error) {
 	}, nil
 }
 
-func (c *Controller) AcquirePut(ctx context.Context, b Budget, bucketChannelID int64, key object.Key) (func(), error) {
+func (c *Controller) AcquirePut(ctx context.Context, b Budget, scope string) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	slot := slotKey{bucketChannelID: bucketChannelID, key: key}
-	if c.slots.tryAcquire(slot) {
-		return c.releaseOnce(slot), nil
+	if c.slots.tryAcquire(scope) {
+		return c.releaseOnce(scope), nil
 	}
 	remaining := b.Remaining(c.clock.Now())
 	if remaining <= 0 {
 		return nil, newSlowDown(putSlotsBusyReason, 0)
 	}
-	if err := c.waitForSlot(ctx, slot, remaining); err != nil {
+	if err := c.waitForSlot(ctx, scope, remaining); err != nil {
 		return nil, err
 	}
-	return c.releaseOnce(slot), nil
+	return c.releaseOnce(scope), nil
 }
 
-func (c *Controller) releaseOnce(slot slotKey) func() {
+func (c *Controller) releaseOnce(scope string) func() {
 	var once sync.Once
 	return func() {
-		once.Do(func() { c.slots.release(slot) })
+		once.Do(func() { c.slots.release(scope) })
 	}
 }
 
-func (c *Controller) waitForSlot(ctx context.Context, slot slotKey, remaining time.Duration) error {
-	waiter := c.slots.enqueue(slot)
+func (c *Controller) waitForSlot(ctx context.Context, scope string, remaining time.Duration) error {
+	waiter := c.slots.enqueue(scope)
 	budgetExpired := c.budgetTimer(ctx, remaining)
 	defer budgetExpired.stop()
 	select {
