@@ -350,6 +350,27 @@ func (s spyDeleter) DeleteMessages(ctx context.Context, peer tgclient.InputPeer,
 	return s.inner.DeleteMessages(ctx, peer, ids)
 }
 
+type shiftedReader struct {
+	inner *faketg.Client
+	mu    sync.Mutex
+	shift int64
+	fail  error
+}
+
+func (r *shiftedReader) GetMessages(ctx context.Context, peer tgclient.InputPeer, ids []int64) ([]tgclient.HistoryMessage, error) {
+	r.mu.Lock()
+	shift, fail := r.shift, r.fail
+	r.mu.Unlock()
+	if fail != nil {
+		return nil, fail
+	}
+	msgs, err := r.inner.GetMessages(ctx, peer, ids)
+	for i := range msgs {
+		msgs[i].Date += shift
+	}
+	return msgs, err
+}
+
 type peerAdapter struct{ client *faketg.Client }
 
 func (p peerAdapter) PeerFor(_ context.Context, channelID int64) (tgclient.InputPeer, error) {
@@ -371,6 +392,7 @@ type env struct {
 	locks     *memKeyLocks
 	log       *eventLog
 	svc       *Deleter
+	reader    *shiftedReader
 	drainer   *Drainer
 	seq       int
 }
@@ -424,6 +446,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatalf("format bucket create: %v", err)
 	}
 	e.project(projection.Observed{ChannelID: registryChannel, MsgID: 2, MsgDate: 1700000002, RawText: text})
+	e.reader = &shiftedReader{inner: client}
 	e.drainer = e.newDrainer(e.queue, spyDeleter{inner: client, env: e, log: e.log})
 	e.svc = e.newService(e.drainer)
 	return e
@@ -453,7 +476,7 @@ func (e *env) deps(drainer ingest.CleanupDrainer) Dependencies {
 	return Dependencies{
 		Buckets: buckets, Gates: e.gates, Authority: openAuthority{}, KeyLocks: e.locks, Objects: objects,
 		Operations: opsLookup{db: e.db}, Jobs: e.jobs, Sender: spySender{inner: e.client, log: e.log},
-		Peers: peerAdapter{client: e.client}, Projector: e.projector, Writer: e.db, Drainer: drainer,
+		Peers: peerAdapter{client: e.client}, Messages: e.reader, Projector: e.projector, Writer: e.db, Drainer: drainer,
 		Principals:     fixedPrincipal{p: Principal{Origin: jobrepo.OriginS3, Scope: "key:AKIATEST", Writer: testAccessKey, RequestID: "req-1"}},
 		StableRandomID: send.StableRandomID, Clock: e.clock, Random: strings.NewReader(strings.Repeat("\x07", 4096)),
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), ActorUserID: e.client.UserID(),

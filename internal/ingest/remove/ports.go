@@ -53,6 +53,10 @@ type PeerResolver interface {
 	PeerFor(ctx context.Context, channelID int64) (tgclient.InputPeer, error)
 }
 
+type MessageReader interface {
+	GetMessages(ctx context.Context, peer tgclient.InputPeer, msgIDs []int64) ([]tgclient.HistoryMessage, error)
+}
+
 type MessageDeleter interface {
 	DeleteMessages(ctx context.Context, peer tgclient.InputPeer, msgIDs []int64) error
 }

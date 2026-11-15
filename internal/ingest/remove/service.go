@@ -34,6 +34,7 @@ type Dependencies struct {
 	Jobs           JobStore
 	Sender         ControlSender
 	Peers          PeerResolver
+	Messages       MessageReader
 	Projector      OpProjector
 	Writer         projection.Writer
 	Drainer        ingest.CleanupDrainer
@@ -70,6 +71,8 @@ func New(deps Dependencies) (*Deleter, error) {
 		missing = "sender"
 	case deps.Peers == nil:
 		missing = "peers"
+	case deps.Messages == nil:
+		missing = "messages"
 	case deps.Projector == nil:
 		missing = "projector"
 	case deps.Writer == nil:
@@ -180,8 +183,8 @@ func (s *Deleter) prepare(ctx context.Context, info bucket.Info, key object.Key,
 		unlock()
 		return nil, nil, err
 	}
-	now := s.deps.Clock.Now().Unix()
-	header, err := formatDel(jobID, string(key), live.PutMsgID, principal.Writer, now)
+	now := s.deps.Clock.Now().UnixMilli()
+	header, err := formatDel(jobID, string(key), live.PutMsgID, principal.Writer, s.deps.Clock.Now().Unix())
 	if err != nil {
 		unlock()
 		return nil, nil, err
@@ -292,12 +295,16 @@ func (s *Deleter) markUncertain(ctx context.Context, job *jobrepo.DeleteJob, cau
 }
 
 func (s *Deleter) project(ctx context.Context, job *jobrepo.DeleteJob, msgID int64) error {
+	sent, err := s.readBack(ctx, job, msgID)
+	if err != nil {
+		return err
+	}
 	outcome, err := s.deps.Projector.ProjectFromOp(ctx, s.deps.Writer, projection.Observed{
 		ChannelID:   job.BucketChannelID,
 		MsgID:       msgID,
-		MsgDate:     s.deps.Clock.Now().Unix(),
+		MsgDate:     sent.Date,
 		ActorUserID: s.deps.ActorUserID,
-		RawText:     job.DelHeader,
+		RawText:     sent.Text,
 	})
 	if err != nil {
 		return fmt.Errorf("remove: project tombstone: %w", err)
@@ -307,6 +314,23 @@ func (s *Deleter) project(ctx context.Context, job *jobrepo.DeleteJob, msgID int
 		return s.commit(ctx, job, msgID)
 	}
 	return fmt.Errorf("remove: tombstone not projected: %s %s", outcome.Kind, outcome.RejectCode)
+}
+
+func (s *Deleter) readBack(ctx context.Context, job *jobrepo.DeleteJob, msgID int64) (tgclient.HistoryMessage, error) {
+	peer, err := s.deps.Peers.PeerFor(ctx, job.BucketChannelID)
+	if err != nil {
+		return tgclient.HistoryMessage{}, fmt.Errorf("remove: resolve channel %d: %w: %w", job.BucketChannelID, errs.ErrSlowDown, err)
+	}
+	found, err := s.deps.Messages.GetMessages(ctx, peer, []int64{msgID})
+	if err != nil {
+		return tgclient.HistoryMessage{}, fmt.Errorf("remove: read back tombstone %d in channel %d: %w: %w", msgID, job.BucketChannelID, errs.ErrSlowDown, err)
+	}
+	for _, msg := range found {
+		if msg.MsgID == msgID && msg.Text != "" && msg.Date > 0 {
+			return msg, nil
+		}
+	}
+	return tgclient.HistoryMessage{}, fmt.Errorf("remove: read back tombstone %d in channel %d: %w: message not returned", msgID, job.BucketChannelID, errs.ErrSlowDown)
 }
 
 func (s *Deleter) commit(ctx context.Context, job *jobrepo.DeleteJob, msgID int64) error {
@@ -331,7 +355,7 @@ func (s *Deleter) abort(ctx context.Context, job *jobrepo.DeleteJob) error {
 }
 
 func (s *Deleter) advance(ctx context.Context, job *jobrepo.DeleteJob, to jobrepo.DeleteState, patch jobrepo.DeletePatch) error {
-	now := s.deps.Clock.Now().Unix()
+	now := s.deps.Clock.Now().UnixMilli()
 	if err := s.deps.Jobs.TransitionDeleteJob(ctx, job.JobID, job.State, to, patch, now); err != nil {
 		return fmt.Errorf("remove: move delete job to %s: %w", to, err)
 	}

@@ -59,7 +59,7 @@ func (d *Drainer) DrainChannel(ctx context.Context, channelID int64) error {
 		if err := ctx.Err(); err != nil {
 			return firstError(first, fmt.Errorf("remove: drain channel %d: %w", channelID, err))
 		}
-		now := d.clock.Now().Unix()
+		now := d.clock.Now().UnixMilli()
 		ids, err := d.queue.ClaimCleanupBatch(ctx, channelID, now, limits.DeleteBatchSize)
 		if err != nil {
 			return firstError(first, fmt.Errorf("remove: claim cleanup batch for channel %d: %w", channelID, err))
@@ -75,7 +75,7 @@ func (d *Drainer) DrainChannel(ctx context.Context, channelID int64) error {
 		}
 		deleteErr := d.messages.DeleteMessages(ctx, peer, ids)
 		if deleteErr == nil {
-			if err := d.queue.ConfirmCleanupDeleted(ctx, channelID, ids, d.clock.Now().Unix()); err != nil {
+			if err := d.queue.ConfirmCleanupDeleted(ctx, channelID, ids, d.clock.Now().UnixMilli()); err != nil {
 				first = firstError(first, fmt.Errorf("remove: confirm cleanup for channel %d: %w", channelID, err))
 			}
 			continue
@@ -89,7 +89,7 @@ func (d *Drainer) DrainChannel(ctx context.Context, channelID int64) error {
 }
 
 func (d *Drainer) deferBatch(ctx context.Context, channelID int64, ids []int64, reason string, first *error) {
-	if err := d.queue.DeferCleanup(ctx, channelID, ids, d.clock.Now().Unix(), truncate(reason)); err != nil {
+	if err := d.queue.DeferCleanup(ctx, channelID, ids, d.clock.Now().UnixMilli(), truncate(reason)); err != nil {
 		*first = firstError(*first, fmt.Errorf("remove: defer cleanup for channel %d: %w", channelID, err))
 		d.logger.Warn("remove: defer cleanup failed", "channel_id", channelID, "messages", len(ids))
 	}

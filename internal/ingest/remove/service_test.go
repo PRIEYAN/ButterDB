@@ -3,6 +3,7 @@ package remove
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -295,7 +296,7 @@ func (e *env) insertJob(t *testing.T, key string, target int64, state jobrepo.De
 	job := jobrepo.DeleteJob{
 		JobID: e.jobID(), Origin: jobrepo.OriginS3, Scope: "key:AKIATEST", Writer: testAccessKey, BucketChannelID: e.peer.ChannelID,
 		BucketName: bucketName, ObjectKey: key, State: jobrepo.DeletePrepared, TargetPutMsgID: target,
-		CreatedAt: e.clock.Now().Unix(), UpdatedAt: e.clock.Now().Unix(),
+		CreatedAt: e.clock.Now().UnixMilli(), UpdatedAt: e.clock.Now().UnixMilli(),
 	}
 	if err := e.jobs.CreateDeleteJob(e.ctx, job); err != nil {
 		t.Fatalf("create job: %v", err)
@@ -318,7 +319,7 @@ func (e *env) crashAfterAttempt(t *testing.T, key string, target int64) {
 	job := jobrepo.DeleteJob{
 		JobID: jobID, Origin: jobrepo.OriginS3, Scope: "key:AKIATEST", Writer: testAccessKey, BucketChannelID: e.peer.ChannelID,
 		BucketName: bucketName, ObjectKey: key, State: jobrepo.DeletePrepared, TargetPutMsgID: target,
-		CreatedAt: e.clock.Now().Unix(), UpdatedAt: e.clock.Now().Unix(),
+		CreatedAt: e.clock.Now().UnixMilli(), UpdatedAt: e.clock.Now().UnixMilli(),
 	}
 	if err := e.jobs.CreateDeleteJob(e.ctx, job); err != nil {
 		t.Fatalf("create job: %v", err)
@@ -432,6 +433,7 @@ func TestNewRejectsMissingDependencies(t *testing.T) {
 		"operations":       func(d *Dependencies) { d.Operations = nil },
 		"jobs":             func(d *Dependencies) { d.Jobs = nil },
 		"sender":           func(d *Dependencies) { d.Sender = nil },
+		"messages":         func(d *Dependencies) { d.Messages = nil },
 		"peers":            func(d *Dependencies) { d.Peers = nil },
 		"projector":        func(d *Dependencies) { d.Projector = nil },
 		"writer":           func(d *Dependencies) { d.Writer = nil },
@@ -473,5 +475,77 @@ func TestJobIDIsUUIDv4(t *testing.T) {
 	}
 	if _, err := newJobID(strings.NewReader("short")); err == nil {
 		t.Fatalf("newJobID accepted a short random source")
+	}
+}
+
+func TestTimeUnits(t *testing.T) {
+	e := newEnv(t)
+	e.seedObject("k")
+	if err := e.svc.Delete(e.ctx, bucketName, "k"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	nowMilli := e.clock.Now().UnixMilli()
+	job := e.jobs.only(t)
+	if job.CreatedAt != nowMilli || job.UpdatedAt != nowMilli {
+		t.Fatalf("job times = %d/%d, want milliseconds %d", job.CreatedAt, job.UpdatedAt, nowMilli)
+	}
+	if got := e.count(`SELECT COUNT(*) FROM deleted_messages WHERE source = 'cleanup' AND recorded_at = ?1`, nowMilli); got != 2 {
+		t.Fatalf("deleted_messages recorded_at in milliseconds = %d rows, want 2", got)
+	}
+	if !strings.Contains(job.DelHeader, "ts="+strconv.FormatInt(e.clock.Now().Unix(), 10)) {
+		t.Fatalf("op ts must stay in seconds: %s", job.DelHeader)
+	}
+}
+
+func TestTombstoneProjectedWithTelegramDate(t *testing.T) {
+	e := newEnv(t)
+	e.seedObject("k")
+	e.reader.shift = 777
+	if err := e.svc.Delete(e.ctx, bucketName, "k"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	job := e.jobs.only(t)
+	want := e.clock.Now().Unix() + 777
+	if got := e.count(`SELECT msg_date FROM replay_log WHERE channel_id = ?1 AND msg_id = ?2`, e.peer.ChannelID, job.DelMsgID); int64(got) != want {
+		t.Fatalf("replay_log msg_date = %d, want Telegram date %d", got, want)
+	}
+	if got := e.count(`SELECT msg_date FROM object_tombstones WHERE channel_id = ?1 AND object_key = 'k'`, e.peer.ChannelID); int64(got) != want {
+		t.Fatalf("tombstone msg_date = %d, want %d", got, want)
+	}
+}
+
+func TestReadBackFailureLeavesJobAttempted(t *testing.T) {
+	e := newEnv(t)
+	seed := e.seedObject("k")
+	e.reader.fail = errors.New("history unavailable")
+	err := e.svc.Delete(e.ctx, bucketName, "k")
+	if !errors.Is(err, errs.ErrSlowDown) {
+		t.Fatalf("Delete error = %v, want SlowDown", err)
+	}
+	job := e.jobs.only(t)
+	if job.State != jobrepo.DeleteDelAttempted {
+		t.Fatalf("job state = %s, want del_attempted", job.State)
+	}
+	if e.liveObjects() != 1 || e.client.CallCount(faketg.MethodDeleteMessages) != 0 || !e.channelHas(seed.PutMsgID) {
+		t.Fatalf("nothing may be projected or deleted without the sent message")
+	}
+	if got := e.count(`SELECT COUNT(*) FROM replay_log WHERE channel_id = ?1 AND msg_id > ?2`, e.peer.ChannelID, seed.PutMsgID); got != 0 {
+		t.Fatalf("tombstone projected with a local-clock date")
+	}
+	e.reader.fail = nil
+	if err := e.svc.Resume(e.ctx, job.JobID); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if e.jobs.only(t).State != jobrepo.DeleteCommitted || e.liveObjects() != 0 {
+		t.Fatalf("resume did not finish the delete")
+	}
+	tombstones := 0
+	for _, sent := range e.net.SentControls(e.peer.ChannelID) {
+		if strings.Contains(sent.Text, "t=del") {
+			tombstones++
+		}
+	}
+	if tombstones != 1 {
+		t.Fatalf("tombstones = %d, want 1", tombstones)
 	}
 }

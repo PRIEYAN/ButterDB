@@ -236,3 +236,24 @@ func TestNewDrainerRejectsMissingDependencies(t *testing.T) {
 		t.Fatalf("NewDrainer: %v", err)
 	}
 }
+
+func TestDeferredAttemptIsMilliseconds(t *testing.T) {
+	e := newEnv(t)
+	e.queuePad(3)
+	boom := errors.New("delete failed")
+	rec := &batchRecorder{inner: e.client, failing: map[int]error{1: boom}}
+	if err := e.newDrainer(e.queue, rec).DrainChannel(e.ctx, e.peer.ChannelID); !errors.Is(err, boom) {
+		t.Fatalf("DrainChannel error = %v", err)
+	}
+	nowMilli := e.clock.Now().UnixMilli()
+	if got := e.count(`SELECT COUNT(*) FROM pending_message_cleanup WHERE next_attempt_at = ?1`, nowMilli); got != 3 {
+		t.Fatalf("rows deferred to the current time in milliseconds = %d, want 3", got)
+	}
+	e.queue.newPass()
+	if err := e.newDrainer(e.queue, e.client).DrainChannel(e.ctx, e.peer.ChannelID); err != nil {
+		t.Fatalf("redrain: %v", err)
+	}
+	if got := e.count(`SELECT COUNT(*) FROM deleted_messages WHERE recorded_at = ?1`, nowMilli); got != 3 {
+		t.Fatalf("recorded_at in milliseconds = %d rows, want 3", got)
+	}
+}
