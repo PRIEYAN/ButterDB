@@ -2,6 +2,7 @@ package fsx
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -264,6 +265,81 @@ func TestRootedErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.call(); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("err = %v, want not exist", err)
+			}
+		})
+	}
+}
+
+func TestRootedOpen(t *testing.T) {
+	r, dir := newRooted(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "inside"), []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		path    string
+		want    string
+		wantErr error
+	}{
+		{"absolute inside root", filepath.Join(dir, "inside"), "payload", nil},
+		{"relative inside root", "inside", "payload", nil},
+		{"missing inside root", filepath.Join(dir, "missing"), "", os.ErrNotExist},
+		{"dotdot escape", filepath.Join("..", filepath.Base(outside), "secret"), "", ErrOutsideRoot},
+		{"absolute outside root", filepath.Join(outside, "secret"), "", ErrOutsideRoot},
+		{"empty path", "", "", ErrOutsideRoot},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, err := r.Open(tc.path)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) || rc != nil {
+					t.Fatalf("rc=%v err=%v, want %v", rc, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := rc.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("read %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRootedOpenRefusesSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on windows")
+	}
+	r, dir := newRooted(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret"), filepath.Join(dir, "filelink")); err != nil {
+		t.Fatal(err)
+	}
+	for name, path := range map[string]string{
+		"through dir link": filepath.Join(dir, "link", "secret"),
+		"file link":        filepath.Join(dir, "filelink"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rc, err := r.Open(path)
+			if err == nil || rc != nil {
+				t.Fatalf("rc=%v err=%v, want an error", rc, err)
 			}
 		})
 	}

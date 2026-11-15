@@ -44,6 +44,14 @@ func (OS) CreateTemp(dir, pattern string) (File, error) {
 	return file, nil
 }
 
+func (OS) Open(name string) (io.ReadCloser, error) {
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
 func (OS) Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }

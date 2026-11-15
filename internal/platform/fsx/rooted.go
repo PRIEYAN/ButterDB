@@ -3,6 +3,7 @@ package fsx
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -118,6 +119,18 @@ func (r *Rooted) CreateTemp(dir, pattern string) (File, error) {
 		return &rootedFile{File: file, name: filepath.Join(r.dir, relDir, base)}, nil
 	}
 	return nil, fmt.Errorf("fsx: no free temp name: %w", fs.ErrExist)
+}
+
+func (r *Rooted) Open(name string) (io.ReadCloser, error) {
+	rel, err := r.rel(name)
+	if err != nil {
+		return nil, err
+	}
+	file, err := r.root.Open(rel)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
 }
 
 func (r *Rooted) Rename(oldpath, newpath string) error {

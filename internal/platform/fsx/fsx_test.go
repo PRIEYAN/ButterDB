@@ -2,6 +2,7 @@ package fsx
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,6 +85,46 @@ func TestOSErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := tc.call(); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("err = %v, want not exist", err)
+			}
+		})
+	}
+}
+
+func TestOSOpen(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "data")
+	if err := os.WriteFile(target, []byte("payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		path    string
+		want    string
+		wantErr error
+	}{
+		{"round trip", target, "payload", nil},
+		{"missing file", filepath.Join(root, "missing"), "", os.ErrNotExist},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, err := OS{}.Open(tc.path)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) || rc != nil {
+					t.Fatalf("rc=%v err=%v, want %v", rc, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(rc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := rc.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("read %q, want %q", got, tc.want)
 			}
 		})
 	}
