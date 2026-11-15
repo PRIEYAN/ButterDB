@@ -1,6 +1,10 @@
 package sigv4
 
-import "github.com/PRIEYAN/ButterDB/internal/domain/errs"
+import (
+	"fmt"
+
+	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
+)
 
 func (e *Error) Error() string {
 	return "sigv4: " + reasonText(e.Reason)
@@ -80,4 +84,8 @@ func reasonText(reason Reason) string {
 	default:
 		return "authentication failed"
 	}
+}
+
+func fmtPresignError(problem string) error {
+	return fmt.Errorf("sigv4: presign: %s", problem)
 }

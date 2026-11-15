@@ -96,7 +96,7 @@ func (v *Verifier) Authenticate(ctx context.Context, r *http.Request) (Auth, err
 	case len(authorization) > 0:
 		return v.authenticateHeader(ctx, r, authorization[0], params, queryErr)
 	case presigned:
-		return Auth{}, newError(ReasonUnsupportedScheme)
+		return v.authenticatePresigned(ctx, r, params)
 	case hasParam(params, querySigV2KeyID) && hasParam(params, querySigV2Sig):
 		return Auth{}, newError(ReasonSigV2)
 	}
@@ -311,7 +311,7 @@ func classifyPayload(r *http.Request, value string, presigned bool) (payloadClas
 		if len(r.Header.Values(headerTrailer)) > 0 && mode != PayloadNone {
 			return payloadClass{}, newError(ReasonChunkFraming)
 		}
-		return nonStreamingClass(r, class)
+		return nonStreamingClass(r, class, value)
 	}
 	class.decodedLength = -1
 	if raw := r.Header.Get(headerDecodedLength); raw != "" {
@@ -331,11 +331,11 @@ func classifyPayload(r *http.Request, value string, presigned bool) (payloadClas
 	return class, nil
 }
 
-func nonStreamingClass(r *http.Request, class payloadClass) (payloadClass, error) {
+func nonStreamingClass(r *http.Request, class payloadClass, value string) (payloadClass, error) {
 	if class.mode != PayloadSignedHex || !bodylessMethod(r.Method) {
 		return class, nil
 	}
-	if value := r.Header.Get(headerContentSHA256); value != emptyPayloadSHA256 && value != "" {
+	if value != emptyPayloadSHA256 {
 		e := newError(ReasonContentSHA256Mismatch)
 		e.ClientSHA256, e.ServerSHA256 = value, emptyPayloadSHA256
 		return payloadClass{}, e
