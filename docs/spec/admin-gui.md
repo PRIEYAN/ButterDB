@@ -682,16 +682,18 @@ while visible, and on `Ctrl+R`.
 
 | Card | Content |
 | --- | --- |
-| Server | State (`starting`, `unlinked`, `syncing`, `ready`, `degraded`) with icon and text; version and commit; uptime |
+| Server | State (`starting`, `unlinked`, `syncing`, `ready`, `degraded`) with icon and text; version and commit; uptime. Shown full width as the screen's pink highlight band (§14.1) |
 | Telegram | Account name and `@username`; `Connected` / `Disconnected`; `Flood wait until <time>` when set; send-rate ceiling per minute |
 | Storage | Buckets, objects, stored bytes, plaintext bytes, encrypted objects |
-| Cache and spool | Block cache used of limit as a progress bar with text, or the text "Off" with no bar and no hit ratio when the limit is 0 (D21), 1 h hit ratio as a percentage; spool used of limit, jobs in flight |
+| Cache and spool | Block cache used of limit as a meter bar with text, or an `Off` badge with no bar and no hit ratio when the limit is 0 (D21), 1 h hit ratio as a percentage; spool used of limit as a meter bar with text, jobs in flight |
 | Components | One row per `components[]` entry: name, status word, detail, since age |
 | Endpoints | S3 public URL and region with copy buttons (`shell.NewCopyField`); a line `Use these with any AWS SDK: endpoint, region, path-style addressing.` |
 | Replica | `state` and pending ops from `Status.replica`; hidden when `not_available` |
 
 Status is never conveyed by colour alone: each status has an icon
-(`theme.ConfirmIcon`, `theme.WarningIcon`, `theme.ErrorIcon`) and a word.
+(`theme.ConfirmIcon`, `theme.WarningIcon`, `theme.ErrorIcon`) and a word. Inside
+the pink band the icon is drawn in ink, so the word and the icon shape carry the
+state.
 
 ---
 
@@ -986,8 +988,11 @@ Stored with `fyne.App.Preferences()` (not secrets):
 | `clipboard_clear_seconds` | `60` | 0 disables clearing |
 | `last_route.<server_id>` | `dashboard` | Route restored on reconnect |
 
-Theme override uses a custom `fyne.Theme` that wraps `theme.DefaultTheme()` and
-forces the variant; `system` uses the OS setting.
+`light` applies the parchment theme and `dark` the terminal theme of §14.1,
+each forcing its variant. `system` applies the same pair and follows the variant
+Fyne reports for the OS. Fyne reports light when the desktop states no
+preference; on Linux it reports dark when the appearance portal cannot be
+reached, and the app cannot tell that case apart.
 
 ### 11.8 Replica (phase 12, `ui/replica`)
 
@@ -1081,9 +1086,9 @@ error.
 | Item | Value |
 | --- | --- |
 | Main window | One, title `butterDB Admin — <server label>`; minimum size 1024 × 680; size and position not persisted |
-| Layout | `container.NewBorder`: banner strip top, sidebar left (`widget.List` of registered screens with icon and title), content centre, status line bottom (server label, connection dot with the word `Connected`/`Offline`, running transfers count) |
+| Layout | `container.NewBorder`: sidebar left (brand block, `widget.List` of registered screens with icon and title, a 1 px rule on its right edge), content centre inside 24 px margins with the banner strip at its top, status line bottom below a 1 px rule (server label, connection icon with the word `Connected`/`Offline`, running transfers count) |
 | Sidebar order | `Link Telegram` (only while not linked), Dashboard, Buckets, Access keys, Objects, Replica (phase 12 builds only), Settings; the footer holds `Switch server` |
-| Dialogs | Fyne in-window dialogs (`dialog.NewCustom`, `dialog.NewForm`, `dialog.NewFileOpen`, `dialog.NewFileSave`, `dialog.NewFolderOpen`) |
+| Dialogs | `shell.Dialog`, a retro window card (§14.1) in a modal `widget.PopUp`, for confirmations, forms, problems and the secret dialog; Fyne's own `dialog.ShowForm`, `dialog.NewFileOpen`, `dialog.NewFileSave` and `dialog.NewFolderOpen` where Fyne supplies the dialog |
 
 ### 13.2 Shortcuts
 
@@ -1125,10 +1130,33 @@ Fyne v2.6 requires widget updates from other goroutines to go through
 | Focus | Focus moves to the first field of a new step or dialog and returns to the invoking control on close; inline errors move focus to the offending field |
 | Text | All status is text plus icon, never colour alone. Toolbar and row buttons carry a text label next to the icon (`widget.NewButtonWithIcon`), never an icon alone |
 | Scale | The app respects Fyne's scale setting (`FYNE_SCALE` and the Fyne settings app); layouts use `container` layouts and no fixed pixel sizes beyond the window minimum |
-| Contrast | Only the stock light and dark themes are used, so contrast follows Fyne's defaults |
+| Contrast | The parchment and terminal themes of §14.1 are checked by `TestThemeContrast` in `internal/shell`: body text 17:1 on parchment and 18.7:1 on paper, 17:1 on the terminal background; ink on pink 7.1:1; secondary text 7.0:1 (light) and 7.3:1 (dark); primary button labels 17:1; danger button labels 5.9:1 (light) and 6.8:1 (dark); links 4.7:1 (light) and 7.4:1 (dark); selected rows 7.1:1 (light) and 7.3:1 (dark); input borders 3.5:1 and 3.3:1. The status icon tokens reach 3.0:1 (success) and 2.9:1 (warning) on parchment, below the 3:1 non-text guideline for the warning icon; every status also carries its word, so no state depends on the icon colour |
 | Copy | Every ID, fingerprint, URL and key is selectable and has a copy action |
 | Time limits | The app imposes none. Telegram's code expiry and pairing expiry are shown as countdowns with their remaining time in text |
 | Screen readers | Fyne v2 does not expose widgets to OS accessibility APIs, so screen readers cannot read the app. This is a known limit of the toolkit and is listed in the operator guide |
+
+### 14.1 Visual design (D22)
+
+The app's look translates [`docs/design.md`](../design.md) to Fyne. Only the
+visual system is taken; no brand or example copy from that document appears in
+the app. Everything lives in `internal/shell`, and screens compose its widgets
+instead of styling themselves.
+
+| Area | Rule |
+| --- | --- |
+| Themes | `shell.NewParchmentTheme` (light, the default), `shell.NewTerminalTheme` (dark) and `shell.NewSystemTheme` (follows the OS variant), returned by `settings.ThemeFor` |
+| Parchment colours | Background `#F7F4EB`; cards, inputs and menus `#FFFFFF`; text `#121212`; secondary text `#52525B`; rules `#D4D1C7`; strong borders and offset shadows `#121212`; selection `#FF66C4` with ink text; links `#2563EB`; success `#16A34A`; warning `#D97706`; error `#B91C1C` (chosen for 5.9:1 on parchment and under parchment text) |
+| Terminal colours | Background `#111214`; raised surfaces `#1A1B1F`; text and strong borders `#F7F4EB`; pink `#FF66C4` for bands and solid offset shadows; selection `#7C3863` with parchment text; rules `#2E2F33`; links `#60A5FA` and errors `#F87171`, lighter than the light tokens to keep contrast on the dark background |
+| Fyne primary colour | Ink in parchment and parchment in terminal, not pink: Fyne paints the primary button fill, the focused input border and checked boxes with it, and design.md's primary button is solid ink. Pink is the selection, focus, hover and highlight colour |
+| Hover and focus | Pink blended over the widget (alpha 0x80 hover and 0x99 focus in parchment, 0x55 and 0x80 in terminal), because Fyne blends these colours over each widget's own fill. Framed action buttons instead invert to a solid pink fill with ink text on hover |
+| Shadows | Fyne's soft shadows and the modal dimming are off (`ColorNameShadow` is transparent). Depth comes from 1 px borders and a solid 4 px offset shadow under window cards and dialogs |
+| Fonts | Embedded under `internal/shell/fonts`: Inter Regular for body text and input, Space Mono Bold for every bold style (headings, section labels, form labels, table headers and button labels, which Fyne always draws bold), JetBrains Mono NL Regular for the monospace style (numbers, sizes, IDs, keys, fingerprints, timestamps and badges). The design's tight heading tracking and line height are web properties Fyne does not expose and are not applied |
+| Sizes | 8 px grid; Fyne padding 4 px; inner padding 10 px (buttons about 10 × 20 px instead of 12 × 20); input and button radius 2 px; selection and scroll bar radius 0; body 14 px, section titles 17 px, headings 24 px, captions 12 px; card padding 24 px; content margins 24 px (design.md's 96 px section padding is a web value) |
+| Window cards | `shell.WindowCard`: 28 px title bar with a 1 px rule, a square, a circle and a pink dot, a monospace path label (`buckets/list`, `keys/new`, `objects/<bucket>/<prefix>`), an optional section title, a 1 px border and the solid offset shadow. Every screen's main panels and every `shell.Dialog` use one |
+| Highlight band | At most one pink area per screen, with ink text: the dashboard server headline, the Telegram account-safety notice, the pin-mismatch view and the secret-shown-once dialog header |
+| Buttons | `shell.Action` frames a button with a 1 px border and the hover inversion; primary buttons are `HighImportance` (ink, parchment label), secondary ones are paper with ink text, destructive ones keep `DangerImportance` red |
+| Other components | `shell.Badge` (rectangular, 2 px radius, monospace `KEY: value` pairs split by a hairline), `shell.Callout` (bordered note with a coloured left bar and an icon), `shell.CodeBlock` (fingerprints, commands, presigned URLs), meter bars for usage and transfers, the problem `Details` expander with a dotted 2 px left rule when closed and a solid one when open, and weighted-column tables with 1 px row rules |
+| Motion | None. Text scramble and spring physics are web effects and are not built |
 
 ---
 
