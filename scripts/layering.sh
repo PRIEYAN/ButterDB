@@ -99,7 +99,7 @@ check_module() {
 	if [ "$kind" = root ]; then
 		export GOWORK=off
 	fi
-	if ! mod="$(cd "$dir" && go list -m 2>"$work/mod.err")"; then
+	if ! mod="$(cd "$dir" && go list -m -f '{{.Dir}}|{{.Path}}' 2>"$work/mod.err" | awk -F'|' -v d="$dir" '$1 == d { print $2; found = 1 } END { exit found ? 0 : 1 }')"; then
 		printf 'layering: cannot read module path in %s\n' "$dir" >&2
 		cat "$work/mod.err" >&2
 		exit 2
