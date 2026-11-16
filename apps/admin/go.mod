@@ -2,10 +2,14 @@ module github.com/PRIEYAN/ButterDB/apps/admin
 
 go 1.26.0
 
-require github.com/PRIEYAN/ButterDB v0.0.0-00010101000000-000000000000
+require (
+	fyne.io/fyne/v2 v2.6.0
+	github.com/PRIEYAN/ButterDB v0.0.0-00010101000000-000000000000
+	github.com/zalando/go-keyring v0.2.8
+	golang.org/x/image v0.47.0
+)
 
 require (
-	fyne.io/fyne/v2 v2.6.0 // indirect
 	fyne.io/systray v1.11.0 // indirect
 	fyne.io/tools v1.7.0 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
@@ -47,8 +51,6 @@ require (
 	github.com/urfave/cli/v2 v2.27.1 // indirect
 	github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673 // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
-	github.com/zalando/go-keyring v0.2.8 // indirect
-	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
@@ -60,3 +62,5 @@ require (
 )
 
 replace github.com/PRIEYAN/ButterDB => ../..
+
+tool fyne.io/tools/cmd/fyne
