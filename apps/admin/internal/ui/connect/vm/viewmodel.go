@@ -26,6 +26,7 @@ type pendingServer struct {
 type ViewModel struct {
 	deps    Dependencies
 	state   *model.Observable[State]
+	pubMu   sync.Mutex
 	mu      sync.Mutex
 	busy    bool
 	pending *pendingServer
@@ -44,10 +45,10 @@ func (v *ViewModel) State() *model.Observable[State] {
 }
 
 func (v *ViewModel) update(change func(*State)) {
-	v.mu.Lock()
+	v.pubMu.Lock()
+	defer v.pubMu.Unlock()
 	s := v.state.Get()
 	change(&s)
-	v.mu.Unlock()
 	v.state.Set(s)
 }
 
@@ -199,11 +200,17 @@ func (v *ViewModel) clearFlow() {
 }
 
 func (v *ViewModel) SetSetupToken(token string) {
+	if v.state.Get().SetupToken == token {
+		return
+	}
 	v.update(func(s *State) { s.SetupToken = token })
 }
 
 func (v *ViewModel) SetPairingCode(raw string) string {
 	formatted := FormatPairingCode(raw)
+	if v.state.Get().PairingCode == formatted {
+		return formatted
+	}
 	v.update(func(s *State) {
 		s.PairingCode = formatted
 		s.PairingCodeComplete = PairingCodeComplete(formatted)
