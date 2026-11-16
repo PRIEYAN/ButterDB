@@ -6,6 +6,10 @@ func (s State) CacheFraction() float64 {
 	return fraction(s.Usage.BlockCache.UsedBytes, s.Usage.BlockCache.LimitBytes)
 }
 
+func (s State) BlockCacheOff() bool {
+	return s.HasUsage && s.Usage.BlockCache.LimitBytes <= 0
+}
+
 func (s State) SpoolFraction() float64 {
 	return fraction(s.Usage.Spool.UsedBytes, s.Usage.Spool.LimitBytes)
 }

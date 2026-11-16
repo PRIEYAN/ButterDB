@@ -211,6 +211,9 @@ func TestDerivedValues(t *testing.T) {
 		check func(State) bool
 	}{
 		{"cache full clamps to one", State{Usage: adminv1.Usage{BlockCache: adminv1.CacheUsage{UsedBytes: 20, LimitBytes: 10}}}, func(s State) bool { return s.CacheFraction() == 1 }},
+		{"cache off reports off and a zero fraction", State{HasUsage: true, Usage: adminv1.Usage{BlockCache: adminv1.CacheUsage{UsedBytes: 5}}}, func(s State) bool { return s.BlockCacheOff() && s.CacheFraction() == 0 }},
+		{"cache with a limit is not off", State{HasUsage: true, Usage: adminv1.Usage{BlockCache: adminv1.CacheUsage{LimitBytes: 10}}}, func(s State) bool { return !s.BlockCacheOff() }},
+		{"cache is not off before usage arrives", State{}, func(s State) bool { return !s.BlockCacheOff() }},
 		{"zero limit is zero", State{Usage: adminv1.Usage{Spool: adminv1.SpoolUsage{UsedBytes: 20}}}, func(s State) bool { return s.SpoolFraction() == 0 }},
 		{"replica hidden when not available", State{HasStatus: true, Status: adminv1.Status{Replica: adminv1.ReplicaSummary{State: "not_available"}}}, func(s State) bool { return !s.ReplicaVisible() }},
 		{"replica hidden before data", State{}, func(s State) bool { return !s.ReplicaVisible() }},
