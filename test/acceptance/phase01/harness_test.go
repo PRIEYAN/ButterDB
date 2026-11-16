@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,25 @@ func buildDaemon(t *testing.T) string {
 func cleanEnv(extra ...string) []string {
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.TempDir()}
 	return append(env, extra...)
+}
+
+func freeLoopbackAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().String()
+}
+
+func serveEnv(t *testing.T, dir string) []string {
+	t.Helper()
+	return cleanEnv(
+		"BUTTERDB_DATA_DIR="+dir,
+		"BUTTERDB_SERVER_KEY_FILE="+filepath.Join(dir, "server.key"),
+		"BUTTERDB_ADMIN_LISTEN="+freeLoopbackAddress(t),
+	)
 }
 
 func runDaemon(t *testing.T, binary string, env []string, args ...string) result {

@@ -11,7 +11,7 @@ import (
 func TestProcessLockPreventsASecondServer(t *testing.T) {
 	binary := buildDaemon(t)
 	dir := privateDir(t)
-	env := cleanEnv("BUTTERDB_DATA_DIR=" + dir)
+	env := serveEnv(t, dir)
 
 	first := startServe(t, binary, env)
 	first.waitForLine(t, "serve started")
