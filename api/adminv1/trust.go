@@ -134,7 +134,7 @@ func ProbeCertificate(ctx context.Context, baseURL string) (CertificateInfo, err
 	defer cancel()
 	dialer := &tls.Dialer{
 		NetDialer: &net.Dialer{},
-		Config:    &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true},
+		Config:    &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true},
 	}
 	conn, err := dialer.DialContext(probeCtx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {

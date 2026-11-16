@@ -64,12 +64,9 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if timeout == 0 {
 		timeout = defaultJSONTimeout
 	}
-	transport := cfg.HTTPTransport
-	if transport == nil {
-		transport, err = newTransport(base, cfg.Trust)
-		if err != nil {
-			return nil, err
-		}
+	transport, err := resolveTransport(base, cfg.Trust, cfg.HTTPTransport)
+	if err != nil {
+		return nil, err
 	}
 	userAgent := cfg.UserAgent
 	if userAgent == "" {
@@ -115,6 +112,35 @@ func parseBaseURL(raw string) (*url.URL, error) {
 
 func isLoopbackHost(host string) bool {
 	return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
+}
+
+func resolveTransport(base *url.URL, trust Trust, custom http.RoundTripper) (http.RoundTripper, error) {
+	if base.Scheme == "http" {
+		if custom != nil {
+			return custom, nil
+		}
+		return newTransport(base, trust)
+	}
+	tlsConfig, err := newTLSConfig(trust)
+	if err != nil {
+		return nil, err
+	}
+	if custom == nil {
+		return newTransport(base, trust)
+	}
+	if trust.Mode != TrustPinned {
+		return custom, nil
+	}
+	source, ok := custom.(*http.Transport)
+	if !ok {
+		return nil, errors.New("adminv1: pinned trust needs an *http.Transport or no custom transport")
+	}
+	if source.DialTLS != nil || source.DialTLSContext != nil {
+		return nil, errors.New("adminv1: pinned trust cannot be combined with a custom tls dialer")
+	}
+	pinned := source.Clone()
+	pinned.TLSClientConfig = tlsConfig
+	return pinned, nil
 }
 
 func newTransport(base *url.URL, trust Trust) (http.RoundTripper, error) {

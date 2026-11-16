@@ -3,8 +3,10 @@ package adminv1_test
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -261,5 +263,116 @@ func TestPinMismatchErrorText(t *testing.T) {
 	var nilErr *adminv1.PinMismatchError
 	if nilErr.Error() == "" {
 		t.Fatal("nil receiver text empty")
+	}
+}
+
+type bareRoundTripper struct{ inner http.RoundTripper }
+
+func (b bareRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return b.inner.RoundTrip(r)
+}
+
+func TestCustomTransportStillEnforcesPin(t *testing.T) {
+	fixture := newTLSFixture(t, serverInfoHandler)
+	insecure := func() *http.Transport {
+		return &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	}
+	pinned := func(pin string, rt http.RoundTripper) (*adminv1.Client, error) {
+		return adminv1.NewClient(adminv1.ClientConfig{
+			BaseURL:       fixture.server.URL,
+			Trust:         adminv1.Trust{Mode: adminv1.TrustPinned, SPKISHA256: pin},
+			HTTPTransport: rt,
+		})
+	}
+	t.Run("mismatching pin on http transport", func(t *testing.T) {
+		client, err := pinned("SHA256:"+strings.Repeat("ab", 32), insecure())
+		if err != nil {
+			t.Fatalf("new client: %v", err)
+		}
+		_, err = client.ServerInfo(context.Background())
+		var mismatch *adminv1.PinMismatchError
+		if !errors.As(err, &mismatch) {
+			t.Fatalf("error = %v, want *PinMismatchError", err)
+		}
+		if n := fixture.requests.Load(); n != 0 {
+			t.Fatalf("server saw %d requests", n)
+		}
+	})
+	t.Run("matching pin on http transport", func(t *testing.T) {
+		client, err := pinned(fixture.pin, insecure())
+		if err != nil {
+			t.Fatalf("new client: %v", err)
+		}
+		if _, err := client.ServerInfo(context.Background()); err != nil {
+			t.Fatalf("server info: %v", err)
+		}
+	})
+	t.Run("caller transport is not modified", func(t *testing.T) {
+		custom := insecure()
+		if _, err := pinned(fixture.pin, custom); err != nil {
+			t.Fatalf("new client: %v", err)
+		}
+		if custom.TLSClientConfig.VerifyConnection != nil || custom.TLSClientConfig.MinVersion != 0 {
+			t.Fatal("caller transport tls config was changed")
+		}
+	})
+	t.Run("other round tripper is rejected", func(t *testing.T) {
+		if _, err := pinned(fixture.pin, bareRoundTripper{inner: insecure()}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("custom tls dialer is rejected", func(t *testing.T) {
+		custom := insecure()
+		custom.DialTLSContext = func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("unused") }
+		if _, err := pinned(fixture.pin, custom); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("malformed pin with custom transport", func(t *testing.T) {
+		if _, err := pinned("SHA256:abcd", insecure()); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("unknown mode with custom transport", func(t *testing.T) {
+		_, err := adminv1.NewClient(adminv1.ClientConfig{
+			BaseURL:       fixture.server.URL,
+			Trust:         adminv1.Trust{Mode: "tofu"},
+			HTTPTransport: insecure(),
+		})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+	t.Run("system trust keeps caller transport", func(t *testing.T) {
+		client, err := adminv1.NewClient(adminv1.ClientConfig{
+			BaseURL:       fixture.server.URL,
+			Trust:         adminv1.Trust{Mode: adminv1.TrustSystem},
+			HTTPTransport: bareRoundTripper{inner: insecure()},
+		})
+		if err != nil {
+			t.Fatalf("new client: %v", err)
+		}
+		if _, err := client.ServerInfo(context.Background()); err != nil {
+			t.Fatalf("server info: %v", err)
+		}
+	})
+}
+
+func TestProbeCertificateAcceptsTLS12Server(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(serverInfoHandler))
+	server.TLS = &tls.Config{MaxVersion: tls.VersionTLS12}
+	server.StartTLS()
+	t.Cleanup(server.Close)
+	info, err := adminv1.ProbeCertificate(context.Background(), server.URL)
+	if err != nil {
+		t.Fatalf("probe: %v", err)
+	}
+	sum := sha256.Sum256(server.Certificate().RawSubjectPublicKeyInfo)
+	if info.SPKISHA256 != "SHA256:"+hex.EncodeToString(sum[:]) {
+		t.Fatalf("spki = %q", info.SPKISHA256)
+	}
+	pinned := pinnedClient(t, server.URL, info.SPKISHA256)
+	if _, err := pinned.ServerInfo(context.Background()); err == nil {
+		t.Fatal("pinned client connected over tls 1.2")
 	}
 }
