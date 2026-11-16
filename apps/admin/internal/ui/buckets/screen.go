@@ -38,7 +38,6 @@ type Screen struct {
 	shownNotEmpty *vm.NotEmpty
 	routed        *model.Problem
 	newShortcut   *desktop.CustomShortcut
-	cancelWatch   func()
 }
 
 func NewView(v *vm.ViewModel, nav shell.Navigator) fyne.CanvasObject {
@@ -58,7 +57,7 @@ func NewScreenWithEnv(v *vm.ViewModel, nav shell.Navigator, env Env) *Screen {
 	}
 	s := &Screen{vm: v, nav: nav, env: env, ctx: context.Background()}
 	s.build()
-	s.cancelWatch = v.State().Subscribe(func(st vm.State) { fyne.Do(func() { s.render(st) }) })
+	v.State().Subscribe(func(st vm.State) { fyne.Do(func() { s.render(st) }) })
 	s.render(v.State().Get())
 	return s
 }
