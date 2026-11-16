@@ -5,11 +5,13 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/widget"
 
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
@@ -221,6 +223,9 @@ func captureBuckets(s *shooter) {
 	models.buckets.State().Set(bucketsvm.State{Buckets: sampleBuckets()})
 	h.settle()
 	s.shot("buckets-list")
+	s.hover(h.waitButton("New bucket").(fyne.CanvasObject))
+	s.shot("buckets-hover-primary")
+	test.MoveMouse(h.win.Canvas(), fyne.NewPos(1, 1))
 	test.Tap(h.waitButton("New bucket"))
 	test.Type(h.waitOverlayEntry("my-bucket"), "invoices")
 	s.shot("buckets-create")
@@ -269,16 +274,35 @@ func captureObjects(t *testing.T, s *shooter) {
 	h.win.Resize(fyne.NewSize(1024, 680))
 	s.shot("objects-minimum-window")
 	h.win.Resize(shotWindowSize)
+	models.objects.ToggleObject("holiday.png")
+	h.settle()
 	test.Tap(h.waitButton("Copy presigned URL…"))
 	h.settle()
+	test.Tap(h.waitOverlayButton("Generate"))
+	h.waitFor("presigned URL", func() bool { return h.overlayHasLabel("Expires at") })
 	s.shot("objects-presign")
 	s.closeOverlays()
+	models.objects.ToggleObject("holiday.png")
 	models.objects.SelectAll()
 	h.settle()
 	test.Tap(h.waitButton("Delete…"))
 	s.shot("objects-delete-confirm")
 	test.Tap(h.waitOverlayButton("Cancel"))
 	h.waitNoOverlay()
+}
+
+func (h *harness) overlayHasLabel(substr string) bool {
+	for _, o := range h.overlayObjects() {
+		if l, ok := o.(*widget.Label); ok && strings.Contains(l.Text, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *shooter) hover(o fyne.CanvasObject) {
+	pos := s.h.app.Driver().AbsolutePositionForObject(o)
+	test.MoveMouse(s.h.win.Canvas(), pos.AddXY(o.Size().Width/2, o.Size().Height/2))
 }
 
 func (s *shooter) closeOverlays() {
