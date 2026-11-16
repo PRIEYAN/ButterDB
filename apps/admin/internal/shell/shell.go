@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
@@ -42,6 +41,7 @@ type Shell struct {
 
 	sidebar   *sidebar
 	banner    *banner
+	frame     *fyne.Container
 	content   *fyne.Container
 	serverTxt *widget.Label
 	linkTxt   *widget.Label
@@ -78,14 +78,15 @@ func (s *Shell) build() {
 	s.sidebar = newSidebar(func(r model.Route) { s.navigate(r, nil) }, s.switchServer)
 	s.banner = newBanner(s.clip, func() time.Time { return s.now() }, s.refreshCurrent)
 	s.content = container.NewStack()
-	s.serverTxt = widget.NewLabel("")
-	s.linkTxt = widget.NewLabel(labelOffline)
+	s.serverTxt = NewMono("")
+	s.linkTxt = NewMono(labelOffline)
 	s.linkIcon = widget.NewIcon(theme.NewErrorThemedResource(theme.CancelIcon()))
-	statusLine := container.NewHBox(s.linkIcon, s.linkTxt, widget.NewSeparator(), s.serverTxt)
-	minimum := canvas.NewRectangle(theme.Color(theme.ColorNameBackground))
-	minimum.SetMinSize(fyne.NewSize(minWindowWidth, minWindowHeight))
-	body := container.NewBorder(s.banner.object(), statusLine, s.sidebar.root, nil, s.content)
-	s.win.SetContent(container.NewStack(minimum, body))
+	status := container.NewHBox(s.linkIcon, s.linkTxt, widget.NewSeparator(), s.serverTxt)
+	statusLine := container.NewVBox(widget.NewSeparator(), Inset(0, contentMargin, 0, gridUnit, status))
+	minimum := FixedSpace(minWindowWidth, minWindowHeight)
+	main := PageMargins(container.NewBorder(s.banner.object(), nil, nil, nil, s.content))
+	s.frame = container.NewBorder(nil, statusLine, s.sidebar.root, nil, main)
+	s.win.SetContent(container.NewStack(minimum, s.frame))
 }
 
 func (s *Shell) registerShellShortcuts() {
@@ -179,11 +180,19 @@ func (s *Shell) Reset() {
 		s.bindShortcut(route, "")
 	}
 	s.banner.clear()
-	s.sidebar.show(true)
+	s.showSidebar(true)
 	s.content.Objects = nil
 	s.content.Refresh()
 	s.refreshSidebar()
 	s.SetServerLabel("", false)
+}
+
+func (s *Shell) showSidebar(visible bool) {
+	if s.sidebar.root.Visible() == visible {
+		return
+	}
+	s.sidebar.show(visible)
+	s.frame.Refresh()
 }
 
 func (s *Shell) currentRoute() model.Route {
@@ -208,7 +217,7 @@ func (s *Shell) navigate(r model.Route, p model.Params) {
 	s.banner.clear()
 	s.content.Objects = []fyne.CanvasObject{sc.Content()}
 	s.content.Refresh()
-	s.sidebar.show(r != model.RouteConnect)
+	s.showSidebar(r != model.RouteConnect)
 	s.sidebar.markCurrent(r)
 	sc.Show(ctx, p)
 }

@@ -9,6 +9,12 @@ import (
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
 )
 
+const (
+	brandName    = "butterDB"
+	brandKicker  = "admin console"
+	sidebarWidth = 15
+)
+
 type routeState struct {
 	disabled bool
 	reason   string
@@ -34,18 +40,36 @@ func newSidebar(onPick func(model.Route), onSwitchServer func()) *sidebar {
 	sb := &sidebar{onPick: onPick}
 	sb.list = widget.NewList(
 		func() int { return len(sb.entries) },
-		func() fyne.CanvasObject {
-			title := widget.NewLabel("")
-			reason := widget.NewLabel("")
-			reason.Importance = widget.LowImportance
-			return container.NewHBox(widget.NewIcon(theme.FileIcon()), container.NewVBox(title, reason))
-		},
+		newSidebarItem,
 		sb.update,
 	)
 	sb.list.OnSelected = sb.selected
-	switchServer := widget.NewButtonWithIcon("Switch server", theme.LogoutIcon(), onSwitchServer)
-	sb.root = container.NewBorder(nil, switchServer, nil, nil, sb.list)
+	switchServer := Action(widget.NewButtonWithIcon("Switch server", theme.LogoutIcon(), onSwitchServer))
+	brand := container.NewVBox(NewSectionTitle(brandName), NewKicker(brandKicker))
+	header := container.NewVBox(Inset(gridUnit, gridUnit, gridUnit, gridUnit, brand), widget.NewSeparator(), VerticalSpace(gridUnit))
+	footer := container.NewVBox(widget.NewSeparator(), Inset(gridUnit, gridUnit, gridUnit, gridUnit, switchServer))
+	width := FixedSpace(theme.TextSize()*sidebarWidth, 0)
+	body := container.NewBorder(header, footer, nil, nil, container.NewStack(width, sb.list))
+	sb.root = container.NewBorder(nil, nil, nil, widget.NewSeparator(), body)
 	return sb
+}
+
+func newSidebarItem() fyne.CanvasObject {
+	title := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	reason := NewKicker("")
+	reason.Importance = widget.LowImportance
+	reason.Hide()
+	return container.NewHBox(widget.NewIcon(theme.FileIcon()), container.NewVBox(title, reason))
+}
+
+func sidebarItemHeight(withReason bool) float32 {
+	item := newSidebarItem().(*fyne.Container)
+	reason := item.Objects[1].(*fyne.Container).Objects[1].(*widget.Label)
+	reason.SetText(brandKicker)
+	if withReason {
+		reason.Show()
+	}
+	return item.MinSize().Height
 }
 
 func (sb *sidebar) update(id widget.ListItemID, item fyne.CanvasObject) {
@@ -87,6 +111,14 @@ func (sb *sidebar) selected(id widget.ListItemID) {
 
 func (sb *sidebar) setEntries(entries []sidebarEntry, current model.Route) {
 	sb.entries = entries
+	plain, tall := sidebarItemHeight(false), sidebarItemHeight(true)
+	for i, entry := range entries {
+		if entry.disabled {
+			sb.list.SetItemHeight(i, tall)
+			continue
+		}
+		sb.list.SetItemHeight(i, plain)
+	}
 	sb.list.Refresh()
 	sb.markCurrent(current)
 }

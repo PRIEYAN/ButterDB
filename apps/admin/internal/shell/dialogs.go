@@ -3,12 +3,16 @@ package shell
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
-const cancelLabel = "Cancel"
+const (
+	cancelLabel        = "Cancel"
+	confirmDialogLabel = "confirm/destructive"
+	typedDialogLabel   = "confirm/typed"
+	problemDialogLabel = "notice"
+)
 
 type keyButton struct {
 	widget.Button
@@ -55,7 +59,7 @@ func (e *escapeEntry) TypedKey(ev *fyne.KeyEvent) {
 }
 
 type confirmDialog struct {
-	dlg     *dialog.CustomDialog
+	dlg     *Dialog
 	win     fyne.Window
 	cancel  *keyButton
 	confirm *keyButton
@@ -71,9 +75,9 @@ func (c *confirmDialog) show() {
 	c.win.Canvas().Focus(c.cancel)
 }
 
-func newConfirmDialog(win fyne.Window, title string, content fyne.CanvasObject, confirmLabel string, onConfirm func()) *confirmDialog {
+func newConfirmDialog(win fyne.Window, label, title string, content fyne.CanvasObject, confirmLabel string, onConfirm func()) *confirmDialog {
 	c := &confirmDialog{win: win}
-	c.dlg = dialog.NewCustomWithoutButtons(title, container.New(readableWidthLayout{}, content), win)
+	c.dlg = NewDialog(win, label, title, content)
 	dismiss := func() { c.dlg.Hide() }
 	c.cancel = newKeyButton(cancelLabel, theme.CancelIcon(), dismiss, dismiss)
 	c.confirm = newKeyButton(confirmLabel, theme.DeleteIcon(), func() {
@@ -81,15 +85,15 @@ func newConfirmDialog(win fyne.Window, title string, content fyne.CanvasObject, 
 		onConfirm()
 	}, dismiss)
 	c.confirm.Importance = widget.DangerImportance
-	c.dlg.SetButtons([]fyne.CanvasObject{c.cancel, c.confirm})
+	c.dlg.SetButtons(c.cancel, c.confirm)
 	return c
 }
 
 func newTypedConfirm(win fyne.Window, title, body, mustType, confirmLabel string, onConfirm func()) *confirmDialog {
 	entry := newEscapeEntry(nil)
 	entry.SetPlaceHolder(`Type "` + mustType + `" to confirm`)
-	content := container.NewVBox(newWrappedLabel(body), widget.NewLabel(`Type "`+mustType+`" to confirm.`), entry)
-	c := newConfirmDialog(win, title, content, confirmLabel, onConfirm)
+	content := container.NewVBox(NewCalloutText(CalloutDanger, body), widget.NewLabel(`Type "`+mustType+`" to confirm.`), entry)
+	c := newConfirmDialog(win, typedDialogLabel, title, content, confirmLabel, onConfirm)
 	c.entry = entry
 	entry.onEscape = func() { c.dlg.Hide() }
 	c.confirm.Disable()
@@ -108,7 +112,7 @@ func ConfirmTyped(win fyne.Window, title, body, mustType, confirmLabel string, o
 }
 
 func newDestructiveConfirm(win fyne.Window, title, body, confirmLabel string, onConfirm func()) *confirmDialog {
-	return newConfirmDialog(win, title, newWrappedLabel(body), confirmLabel, onConfirm)
+	return newConfirmDialog(win, confirmDialogLabel, title, NewCalloutText(CalloutDanger, body), confirmLabel, onConfirm)
 }
 
 func ConfirmDestructive(win fyne.Window, title, body, confirmLabel string, onConfirm func()) {
@@ -116,10 +120,10 @@ func ConfirmDestructive(win fyne.Window, title, body, confirmLabel string, onCon
 }
 
 func showProblemDialog(win fyne.Window, content fyne.CanvasObject) *keyButton {
-	dlg := dialog.NewCustomWithoutButtons("", content, win)
+	dlg := NewDialog(win, problemDialogLabel, "", content)
 	dismiss := func() { dlg.Hide() }
 	closeButton := newKeyButton(closeLabel, theme.CancelIcon(), dismiss, dismiss)
-	dlg.SetButtons([]fyne.CanvasObject{closeButton})
+	dlg.SetButtons(closeButton)
 	dlg.Show()
 	win.Canvas().Focus(closeButton)
 	return closeButton

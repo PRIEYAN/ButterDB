@@ -45,8 +45,8 @@ func (b *banner) showInfo(text string) {
 	b.stopCountdown()
 	label := newWrappedLabel(text)
 	dismiss := widget.NewButtonWithIcon("Dismiss", theme.CancelIcon(), b.clear)
-	row := container.NewBorder(nil, nil, widget.NewIcon(theme.InfoIcon()), dismiss, label)
-	b.set(widget.NewCard("", "", row))
+	row := container.NewBorder(nil, nil, nil, container.NewVBox(Action(dismiss)), label)
+	b.set(NewCallout(CalloutInfo, row))
 }
 
 func (b *banner) showProblem(p model.Problem) {
@@ -55,10 +55,10 @@ func (b *banner) showProblem(p model.Problem) {
 	buttons := container.NewHBox()
 	retry := b.retryButton(p)
 	if retry != nil {
-		buttons.Add(retry)
+		buttons.Add(Action(retry))
 	}
-	buttons.Add(dismiss)
-	rows := []fyne.CanvasObject{widget.NewLabelWithStyle(p.Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})}
+	buttons.Add(Action(dismiss))
+	rows := []fyne.CanvasObject{NewFieldLabel(p.Title)}
 	rows[0].(*widget.Label).Wrapping = fyne.TextWrapWord
 	if p.Body != "" {
 		rows = append(rows, newWrappedLabel(p.Body))
@@ -74,8 +74,8 @@ func (b *banner) showProblem(p model.Problem) {
 	if text := detailsText(p); text != "" {
 		rows = append(rows, newDetailsExpander(text, b.clip))
 	}
-	row := container.NewBorder(nil, nil, widget.NewIcon(theme.WarningIcon()), buttons, container.NewVBox(rows...))
-	b.set(widget.NewCard("", "", row))
+	row := container.NewBorder(nil, nil, nil, container.NewVBox(buttons), container.NewVBox(rows...))
+	b.set(NewCallout(CalloutWarning, row))
 }
 
 func (b *banner) retryButton(p model.Problem) *widget.Button {
@@ -93,7 +93,7 @@ func (b *banner) retryButton(p model.Problem) *widget.Button {
 }
 
 func (b *banner) set(content fyne.CanvasObject) {
-	b.root.Objects = []fyne.CanvasObject{content}
+	b.root.Objects = []fyne.CanvasObject{content, VerticalSpace(2 * gridUnit)}
 	b.root.Show()
 	b.root.Refresh()
 }
