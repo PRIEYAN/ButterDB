@@ -54,6 +54,12 @@ func (f *fakeClient) ListObjects(_ context.Context, _ string, opts adminv1.ListO
 	return f.pages[opts.Prefix], nil
 }
 
+func (f *fakeClient) lists() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.listPrefix)
+}
+
 func (f *fakeClient) HeadObject(context.Context, string, string) (adminv1.ObjectMeta, error) {
 	return adminv1.ObjectMeta{}, &adminv1.APIError{Status: http.StatusNotFound, Body: adminv1.ErrorBody{Code: adminv1.CodeObjectNotFound}}
 }
@@ -281,6 +287,9 @@ func TestDeleteConfirmationDeletesAfterConfirm(t *testing.T) {
 	}
 	test.Tap(confirm)
 	eventually(t, "single object deleted", func() bool { return client.deletes() == 1 })
+	eventually(t, "listing refreshed after the delete", func() bool {
+		return client.lists() >= 2 && !h.vmodel.State().Get().Loading
+	})
 }
 
 func findButton(root fyne.CanvasObject, label string) fyne.Tappable {
@@ -320,9 +329,25 @@ func TestPresignDialogOpensForSelectedObject(t *testing.T) {
 	if overlay == nil {
 		t.Fatal("presign dialog did not open")
 	}
+	eventually(t, "signing keys loaded", func() bool {
+		h.browser.uiMu.Lock()
+		defer h.browser.uiMu.Unlock()
+		return signingKeysLoaded(overlay)
+	})
+	h.browser.uiMu.Lock()
+	defer h.browser.uiMu.Unlock()
 	if findButton(overlay, "Generate") == nil {
 		t.Fatal("presign dialog has no Generate button")
 	}
+}
+
+func signingKeysLoaded(root fyne.CanvasObject) bool {
+	for _, o := range test.LaidOutObjects(root) {
+		if s, ok := o.(*widget.Select); ok && s.PlaceHolder != loadingKeysText {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSelectAllShortcutSelectsLoadedRows(t *testing.T) {
@@ -387,8 +412,11 @@ func TestScreenContract(t *testing.T) {
 	screen.Show(ctx, model.Params{model.ParamBucket: "photos", model.ParamPrefix: "a/"})
 	eventually(t, "bucket opened from params", func() bool {
 		bucket, prefix := v.Location()
-		return bucket == "photos" && prefix == "a/"
+		return bucket == "photos" && prefix == "a/" && !v.State().Get().Loading
 	})
+	screen.browser.uiMu.Lock()
+	screen.browser.uiMu.Unlock()
+	time.Sleep(10 * time.Millisecond)
 	screen.Hide()
 	cancel()
 }
