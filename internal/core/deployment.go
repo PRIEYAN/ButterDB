@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
+	"github.com/PRIEYAN/ButterDB/internal/storage/sqlitedb"
 )
 
 const (
@@ -82,4 +83,12 @@ func (m *adminMeta) SetDeploymentID(ctx context.Context, deploymentID string) er
 		return fmt.Errorf("core: write server id: %w", err)
 	}
 	return nil
+}
+
+func EnsureServerID(ctx context.Context, control *sqlitedb.DB, random io.Reader) (string, error) {
+	meta, err := newAdminMeta(control, random)
+	if err != nil {
+		return "", err
+	}
+	return meta.EnsureDeploymentID(ctx)
 }

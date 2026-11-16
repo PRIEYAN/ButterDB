@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/PRIEYAN/ButterDB/internal/access/keys"
 	"github.com/PRIEYAN/ButterDB/internal/buckets"
 	"github.com/PRIEYAN/ButterDB/internal/crypto/keyring"
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
@@ -47,6 +48,7 @@ type RuntimeDependencies struct {
 	Random       io.Reader
 	Logger       *slog.Logger
 	Sweeper      sweeper.Config
+	Keys         *keys.Service
 }
 
 type Runtime struct {
@@ -56,14 +58,15 @@ type Runtime struct {
 	Read       *Read
 	S3         *S3
 
-	group *lifecycle.Group
+	database *sqlitedb.DB
+	group    *lifecycle.Group
 }
 
 func NewRuntime(deps RuntimeDependencies) (*Runtime, error) {
 	if err := validateRuntimeDependencies(deps); err != nil {
 		return nil, err
 	}
-	rt := &Runtime{}
+	rt := &Runtime{database: deps.Database}
 	if err := rt.assemble(deps); err != nil {
 		return nil, err
 	}
@@ -112,7 +115,7 @@ func (rt *Runtime) assemble(deps RuntimeDependencies) error {
 	}
 	rt.S3, err = NewS3(S3Dependencies{
 		Config: deps.Config, Control: deps.Control, Database: deps.Database, Ring: deps.Ring, Write: rt.Write, Read: rt.Read,
-		Clock: deps.Clock, Random: deps.Random, Logger: deps.Logger,
+		Clock: deps.Clock, Random: deps.Random, Logger: deps.Logger, Keys: deps.Keys,
 	})
 	return err
 }

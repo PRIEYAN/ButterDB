@@ -40,6 +40,7 @@ type S3Dependencies struct {
 	Clock    clock.Clock
 	Random   io.Reader
 	Logger   *slog.Logger
+	Keys     *keys.Service
 }
 
 type S3 struct {
@@ -71,13 +72,11 @@ func NewS3(deps S3Dependencies) (*S3, error) {
 }
 
 func (s *S3) assembleAccess(deps S3Dependencies) error {
-	repo, err := keyrepo.New(deps.Control)
-	if err != nil {
-		return fmt.Errorf("core: s3: key repository: %w", err)
-	}
-	s.Keys, err = keys.NewService(keys.Dependencies{Repo: repo, Sealer: deps.Ring, Clock: deps.Clock, Random: deps.Random})
-	if err != nil {
-		return fmt.Errorf("core: s3: key service: %w", err)
+	var err error
+	if s.Keys = deps.Keys; s.Keys == nil {
+		if s.Keys, err = NewKeyService(deps.Control, deps.Ring, deps.Clock, deps.Random); err != nil {
+			return err
+		}
 	}
 	s.Verifier = sigv4.NewVerifier(sigv4.Config{Region: deps.Config.S3.Region, Now: deps.Clock.Now}, s.Keys)
 	buckets, err := bucketrepo.New(deps.Database)
@@ -259,4 +258,16 @@ func validateS3Dependencies(deps S3Dependencies) error {
 		return fmt.Errorf("core: s3: %w: %s", errs.ErrMissingDependency, missing)
 	}
 	return nil
+}
+
+func NewKeyService(control *sqlitedb.DB, ring *keyring.Ring, clk clock.Clock, random io.Reader) (*keys.Service, error) {
+	repo, err := keyrepo.New(control)
+	if err != nil {
+		return nil, fmt.Errorf("core: key repository: %w", err)
+	}
+	service, err := keys.NewService(keys.Dependencies{Repo: repo, Sealer: ring, Clock: clk, Random: random})
+	if err != nil {
+		return nil, fmt.Errorf("core: key service: %w", err)
+	}
+	return service, nil
 }

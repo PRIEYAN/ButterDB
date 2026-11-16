@@ -23,6 +23,7 @@ type Dependencies struct {
 	LogOutput io.Writer
 	Clock     clock.Clock
 	FS        fsx.FS
+	Build     BuildInfo
 }
 
 type App struct {
@@ -31,6 +32,7 @@ type App struct {
 	group  *lifecycle.Group
 	clock  clock.Clock
 	fsys   fsx.FS
+	build  BuildInfo
 
 	mu   sync.Mutex
 	data *datadir.Dir
@@ -56,6 +58,7 @@ func New(deps Dependencies) (*App, error) {
 		group:  lifecycle.NewGroup(deps.Config.Shutdown.ComponentTimeout.Std()),
 		clock:  deps.Clock,
 		fsys:   deps.FS,
+		build:  deps.Build,
 	}
 	app.group.Add("datadir", &dataDirComponent{app: app, fsys: deps.FS})
 	app.group.Add("processlock", &lockComponent{app: app, role: deps.Role, clock: deps.Clock})
