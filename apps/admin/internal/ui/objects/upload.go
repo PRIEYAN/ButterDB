@@ -73,7 +73,7 @@ func (b *browser) showUploadOptions(bucket string, spec vm.UploadSpec) {
 		widget.NewFormItem("Encryption", encryption),
 		widget.NewFormItem("Metadata", metadata),
 	)
-	var dlg *dialog.CustomDialog
+	var dlg *shell.Dialog
 	cancel := widget.NewButton("Cancel", func() { dlg.Hide() })
 	upload := widget.NewButton("Upload", func() {
 		pairs, bad := vm.ParseMetadata(metadata.Text)
@@ -89,7 +89,7 @@ func (b *browser) showUploadOptions(bucket string, spec vm.UploadSpec) {
 		b.startUploads(bucket, []vm.UploadSpec{spec})
 	})
 	upload.Importance = widget.HighImportance
-	dlg = newChoiceDialog(b.win, "Upload options", container.NewVBox(form, problem), cancel, upload)
+	dlg = newChoiceDialog(b.win, "objects/upload-options", "Upload options", container.NewVBox(form, problem), cancel, upload)
 	dlg.Show()
 	b.win.Canvas().Focus(key)
 }
@@ -153,7 +153,7 @@ func (b *browser) uploadPaths(bucket, prefix string, paths []string) {
 func (b *browser) askReplace(ctx context.Context, key string, existing adminv1.ObjectMeta) vm.ReplaceChoice {
 	choices := make(chan vm.ReplaceChoice, 1)
 	b.ui(func() {
-		var dlg *dialog.CustomDialog
+		var dlg *shell.Dialog
 		pick := func(choice vm.ReplaceChoice) func() {
 			return func() {
 				dlg.Hide()
@@ -168,7 +168,7 @@ func (b *browser) askReplace(ctx context.Context, key string, existing adminv1.O
 		replaceAll.Importance = widget.DangerImportance
 		body := widget.NewLabel(key + " already exists (" + shell.FormatBytes(existing.SizeBytes) + "). Replace it with the new file?")
 		body.Wrapping = fyne.TextWrapWord
-		dlg = newChoiceDialog(b.win, "Replace existing object?", body, skip, replace, skipAll, replaceAll)
+		dlg = newChoiceDialog(b.win, "objects/replace", "Replace existing object?", body, skip, replace, skipAll, replaceAll)
 		dlg.Show()
 		b.win.Canvas().Focus(skip)
 	})
@@ -183,7 +183,7 @@ func (b *browser) askReplace(ctx context.Context, key string, existing adminv1.O
 func (b *browser) askConflict(ctx context.Context, path string) vm.ConflictChoice {
 	choices := make(chan vm.ConflictChoice, 1)
 	b.ui(func() {
-		var dlg *dialog.CustomDialog
+		var dlg *shell.Dialog
 		pick := func(choice vm.ConflictChoice) func() {
 			return func() {
 				dlg.Hide()
@@ -196,7 +196,7 @@ func (b *browser) askConflict(ctx context.Context, path string) vm.ConflictChoic
 		replace.Importance = widget.DangerImportance
 		body := widget.NewLabel(path + " already exists.")
 		body.Wrapping = fyne.TextWrapWord
-		dlg = newChoiceDialog(b.win, "File exists", body, skip, keep, replace)
+		dlg = newChoiceDialog(b.win, "objects/file-exists", "File exists", body, skip, keep, replace)
 		dlg.Show()
 		b.win.Canvas().Focus(keep)
 	})

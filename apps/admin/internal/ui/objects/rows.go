@@ -31,6 +31,7 @@ func (b *browser) updateCell(id widget.TableCellID, o fyne.CanvasObject) {
 	defer func() { c.updating = false }()
 	c.check.Hide()
 	c.icon.Hide()
+	c.label.TextStyle = fyne.TextStyle{Monospace: id.Col != colName}
 	c.label.SetText("")
 	if !ok {
 		return

@@ -6,11 +6,11 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/objects/vm"
 )
 
@@ -85,8 +85,16 @@ func (d *presignDialog) show() {
 		widget.NewFormItem("Signing key", d.signing),
 		widget.NewFormItem("Expires in", container.NewVBox(d.expiry, d.custom)),
 	)
-	content := container.NewVBox(form, d.problem, d.generate, d.result, d.expires, d.copyURL, warning)
-	dlg := dialog.NewCustom("Copy presigned URL", dismissLabel, content, d.owner.win)
+	d.result.TextStyle = fyne.TextStyle{Monospace: true}
+	d.expires.TextStyle = fyne.TextStyle{Monospace: true}
+	content := container.NewVBox(
+		form, d.problem,
+		container.NewHBox(shell.Action(d.generate)),
+		shell.NewCodeBlock(d.result), d.expires,
+		container.NewHBox(shell.Action(d.copyURL)),
+		shell.NewCallout(shell.CalloutWarning, warning),
+	)
+	dlg := newInfoDialog("objects/presign", "Copy presigned URL", content, d.owner.win)
 	dlg.Show()
 	go d.loadKeys()
 }

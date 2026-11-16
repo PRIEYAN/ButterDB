@@ -2,8 +2,9 @@ package objects
 
 import (
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 )
 
 const dismissLabel = "Close"
@@ -18,17 +19,18 @@ func (appClipboard) Text() string {
 	return fyne.CurrentApp().Clipboard().Content()
 }
 
-func newInfoDialog(title string, content fyne.CanvasObject, win fyne.Window) *dialog.CustomDialog {
-	dlg := dialog.NewCustom(title, dismissLabel, content, win)
+func newInfoDialog(label, title string, content fyne.CanvasObject, win fyne.Window) *shell.Dialog {
+	dlg := shell.NewDialog(win, label, title, content)
+	dlg.SetButtons(widget.NewButton(dismissLabel, func() { dlg.Hide() }))
 	return dlg
 }
 
-func newChoiceDialog(win fyne.Window, title string, content fyne.CanvasObject, buttons ...*widget.Button) *dialog.CustomDialog {
-	dlg := dialog.NewCustomWithoutButtons(title, content, win)
+func newChoiceDialog(win fyne.Window, label, title string, content fyne.CanvasObject, buttons ...*widget.Button) *shell.Dialog {
+	dlg := shell.NewDialog(win, label, title, content)
 	objects := make([]fyne.CanvasObject, 0, len(buttons))
 	for _, button := range buttons {
 		objects = append(objects, button)
 	}
-	dlg.SetButtons(objects)
+	dlg.SetButtons(objects...)
 	return dlg
 }
