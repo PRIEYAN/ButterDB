@@ -1,0 +1,8 @@
+Website = "https://github.com/PRIEYAN/ButterDB"
+
+[Details]
+Icon = "packaging/icon.png"
+Name = "butterDB Admin"
+ID = "io.github.prieyan.butterdb.admin"
+Version = "0.1.0"
+Build = 1
