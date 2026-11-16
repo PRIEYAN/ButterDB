@@ -36,6 +36,7 @@ type adminStatusDependencies struct {
 	config    config.Config
 	relay     setup.LoginRelay
 	slot      *BackendSlot
+	registry  RegistryReporter
 	clock     clock.Clock
 	serverID  string
 	build     BuildInfo
@@ -70,7 +71,7 @@ func (s *adminStatus) Status(ctx context.Context) (adminv1.Status, error) {
 		UptimeSeconds: int64(now.Sub(s.deps.startedAt) / time.Second),
 		State:         serverState(snap, backend),
 		Telegram:      telegramHealth(snap, backend, cfg.Telegram.SendRate.ControlPerMinute),
-		Components:    s.components(backend),
+		Components:    s.components(snap, backend),
 		Endpoints:     adminv1.Endpoints{S3PublicURL: cfg.S3.PublicURL, S3Region: cfg.S3.Region, MediaPublicURL: mediaPublicURL(cfg.Media)},
 		Limits: adminv1.Limits{
 			MaxObjectBytes: limits.MaxStoredObjectBytes, MaxKeyBytes: limits.MaxKeyBytes, MaxUserMetadataBytes: limits.MaxUserMetadataBytes,
@@ -124,7 +125,7 @@ func mediaPublicURL(cfg config.MediaConfig) string {
 	return cfg.PublicURL
 }
 
-func (s *adminStatus) components(backend *Backend) []adminv1.Component {
+func (s *adminStatus) components(snap identity.Snapshot, backend *Backend) []adminv1.Component {
 	status := componentDown
 	if backend != nil {
 		status = componentOK
@@ -134,7 +135,20 @@ func (s *adminStatus) components(backend *Backend) []adminv1.Component {
 	for _, name := range names {
 		components = append(components, adminv1.Component{Name: name, Status: status, Since: s.deps.startedAt.UTC()})
 	}
-	return components
+	return append(components, s.registryComponent(snap, backend))
+}
+
+func (s *adminStatus) registryComponent(snap identity.Snapshot, backend *Backend) adminv1.Component {
+	report := RegistryReport{Status: RegistryPending}
+	switch {
+	case backend != nil:
+		report.Status = RegistryVerified
+	case snap.State != identity.StateLinked:
+		report.Status = RegistryAbsent
+	case s.deps.registry != nil:
+		report = s.deps.registry.RegistryReport()
+	}
+	return adminv1.Component{Name: "registry", Status: report.Status, Detail: report.Detail, Since: s.deps.startedAt.UTC()}
 }
 
 func (s *adminStatus) Usage(ctx context.Context) (adminv1.Usage, error) {

@@ -32,21 +32,23 @@ type BuildInfo struct {
 }
 
 type AdminDependencies struct {
-	Config   config.Config
-	Data     *datadir.Dir
-	Control  *sqlitedb.DB
-	Keys     *keys.Service
-	Relay    setup.LoginRelay
-	Messages SavedMessagesSender
-	Backend  *BackendSlot
-	ServerID string
-	Build    BuildInfo
-	Files    tlscert.Filesystem
-	Clock    clock.Clock
-	Sleeper  flow.Sleeper
-	Random   io.Reader
-	Logger   *slog.Logger
-	Hostname func() (string, error)
+	Config     config.Config
+	Data       *datadir.Dir
+	Control    *sqlitedb.DB
+	Keys       *keys.Service
+	Relay      setup.LoginRelay
+	Messages   SavedMessagesSender
+	Backend    *BackendSlot
+	LinkEvents LinkObserver
+	Registry   RegistryReporter
+	ServerID   string
+	Build      BuildInfo
+	Files      tlscert.Filesystem
+	Clock      clock.Clock
+	Sleeper    flow.Sleeper
+	Random     io.Reader
+	Logger     *slog.Logger
+	Hostname   func() (string, error)
 }
 
 type Admin struct {
@@ -96,7 +98,7 @@ func (a *Admin) assemble() error {
 	limiter := session.NewLimiter(session.DefaultLimiterConfig(), deps.Clock)
 	tokens := session.NewTokens(deps.Random)
 	claims := claimStore{repo: a.repo}
-	relay := &limitedRelay{inner: deps.Relay, limiter: limiter, backend: deps.Backend}
+	relay := &limitedRelay{inner: deps.Relay, limiter: limiter, backend: deps.Backend, links: deps.LinkEvents}
 	a.setup, err = setup.New(setup.Dependencies{
 		Relay: relay, Claims: claims, Tokens: tokens, Clock: deps.Clock, Random: deps.Random, Logger: deps.Logger,
 		TTL: deps.Config.Admin.SetupTokenTTL.Std(), ServerID: deps.ServerID,
@@ -134,7 +136,7 @@ func (a *Admin) assembleRouter(limiter *session.Limiter, tokens *session.Tokens,
 	failures := newAuthFailureAuditor(a.repo, deps.Clock, deps.Logger)
 	startedAt := deps.Clock.Now()
 	status := newAdminStatus(adminStatusDependencies{
-		config: cfg, relay: deps.Relay, slot: deps.Backend, clock: deps.Clock, serverID: deps.ServerID, build: deps.Build, startedAt: startedAt,
+		config: cfg, relay: deps.Relay, slot: deps.Backend, registry: deps.Registry, clock: deps.Clock, serverID: deps.ServerID, build: deps.Build, startedAt: startedAt,
 	})
 	router, err := handlers.NewRouter(handlers.Dependencies{
 		Buckets: adminBuckets{gate: gate},
