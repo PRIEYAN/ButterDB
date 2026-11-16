@@ -19,6 +19,7 @@ import (
 const (
 	requestIDBytes   = 16
 	jsonRouteTimeout = 60 * time.Second
+	relayRouteBudget = 75 * time.Second
 )
 
 type api struct {
@@ -105,21 +106,29 @@ func lowerAll(values []string) []string {
 }
 
 func (a *api) public(pattern string, h routeHandler) {
-	a.mux.Handle(pattern, a.jsonDeadlines(a.route(h)))
+	a.mux.Handle(pattern, a.jsonDeadlines(jsonRouteTimeout, a.route(h)))
+}
+
+func (a *api) publicRelay(pattern string, h routeHandler) {
+	a.mux.Handle(pattern, a.jsonDeadlines(relayRouteBudget, a.route(h)))
 }
 
 func (a *api) authed(pattern string, h routeHandler) {
-	a.mux.Handle(pattern, a.jsonDeadlines(a.deps.Auth(a.route(h))))
+	a.mux.Handle(pattern, a.jsonDeadlines(jsonRouteTimeout, a.deps.Auth(a.route(h))))
+}
+
+func (a *api) authedRelay(pattern string, h routeHandler) {
+	a.mux.Handle(pattern, a.jsonDeadlines(relayRouteBudget, a.deps.Auth(a.route(h))))
 }
 
 func (a *api) authedStream(pattern string, h routeHandler) {
 	a.mux.Handle(pattern, a.deps.Auth(a.route(h)))
 }
 
-func (a *api) jsonDeadlines(next http.Handler) http.Handler {
+func (a *api) jsonDeadlines(budget time.Duration, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		controller := http.NewResponseController(w)
-		deadline := a.deps.Clock.Now().Add(jsonRouteTimeout)
+		deadline := a.deps.Clock.Now().Add(budget)
 		_ = controller.SetReadDeadline(deadline)
 		_ = controller.SetWriteDeadline(deadline)
 		next.ServeHTTP(w, r)
@@ -127,6 +136,8 @@ func (a *api) jsonDeadlines(next http.Handler) http.Handler {
 }
 
 func (a *api) registerRoutes() {
+	a.registerSetupRoutes()
+	a.registerTelegramRoutes()
 	a.registerReplicaRoutes()
 }
 

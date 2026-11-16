@@ -458,6 +458,7 @@ type harness struct {
 	devices *fakeDevices
 	device  adminrepo.Device
 	config  Config
+	reject  bool
 }
 
 type deviceContextKey struct{}
@@ -515,6 +516,10 @@ func (h *harness) dependencies() Dependencies {
 		},
 		Auth: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if h.reject {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
 				ctx := context.WithValue(r.Context(), deviceContextKey{}, h.device)
 				next.ServeHTTP(w, r.WithContext(ctx))
 			})
