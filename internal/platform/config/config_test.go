@@ -273,8 +273,8 @@ func keyCases() []keyCase {
 		{"telegram.send_rate.documents_per_minute", "6", []string{"0", "121"}, []string{"1", "120"}},
 		{"telegram.send_rate.documents_burst", "1", []string{"0", "21"}, []string{"1", "20"}},
 		{"cache.dir", "/var/lib/butterdb/cache", badPath, nil},
-		{"cache.blocks_max_bytes", "20GiB", badSize, nil},
-		{"cache.warm_on_put_max_bytes", "64MiB", []string{"-1", "64GB"}, []string{"0"}},
+		{"cache.blocks_max_bytes", "0", []string{"-1", "20GB"}, []string{"20GiB"}},
+		{"cache.warm_on_put_max_bytes", "0", []string{"-1", "64GB"}, []string{"64MiB"}},
 		{"cache.min_free_bytes", "2GiB", []string{"-1"}, []string{"0"}},
 		{"spool.max_bytes", "8GiB", badSize, nil},
 		{"spool.multipart_max_bytes", "16GiB", badSize, nil},
@@ -588,4 +588,55 @@ func TestDurationAndSizeParsing(t *testing.T) {
 			t.Fatalf("bare integer duration accepted")
 		}
 	})
+}
+
+func TestCacheDisabledByDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.Cache.BlocksMaxBytes != 0 {
+		t.Fatalf("blocks_max_bytes default = %d, want 0", cfg.Cache.BlocksMaxBytes)
+	}
+	if cfg.Cache.WarmOnPutMaxBytes != 0 {
+		t.Fatalf("warm_on_put_max_bytes default = %d, want 0", cfg.Cache.WarmOnPutMaxBytes)
+	}
+	loaded, findings, err := loadFile(t, "")
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("err=%v findings=%v", err, findings)
+	}
+	if loaded.Cache.BlocksMaxBytes != 0 || loaded.Cache.WarmOnPutMaxBytes != 0 {
+		t.Fatalf("loaded cache sizes = %d %d, want 0 0", loaded.Cache.BlocksMaxBytes, loaded.Cache.WarmOnPutMaxBytes)
+	}
+}
+
+func TestCacheBlocksMaxBytesZeroIsValid(t *testing.T) {
+	cases := []struct {
+		name      string
+		content   string
+		want      int64
+		wantError bool
+	}{
+		{name: "zero integer", content: "[cache]\nblocks_max_bytes = 0\n", want: 0},
+		{name: "zero string", content: "[cache]\nblocks_max_bytes = \"0\"\n", want: 0},
+		{name: "positive opt in", content: "[cache]\nblocks_max_bytes = \"1GiB\"\n", want: 1 << 30},
+		{name: "negative rejected", content: "[cache]\nblocks_max_bytes = -1\n", wantError: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, findings, err := loadFile(t, tc.content)
+			if tc.wantError {
+				if err == nil {
+					t.Fatal("negative blocks_max_bytes accepted")
+				}
+				if _, ok := findingFor(findings, "cache.blocks_max_bytes"); !ok {
+					t.Fatalf("findings %v lack cache.blocks_max_bytes", findings)
+				}
+				return
+			}
+			if err != nil || len(findings) != 0 {
+				t.Fatalf("err=%v findings=%v", err, findings)
+			}
+			if cfg.Cache.BlocksMaxBytes.Int64() != tc.want {
+				t.Fatalf("blocks_max_bytes = %d, want %d", cfg.Cache.BlocksMaxBytes, tc.want)
+			}
+		})
+	}
 }

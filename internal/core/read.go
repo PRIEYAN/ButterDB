@@ -128,8 +128,8 @@ func rangeReaderConfig(deps ReadDependencies) rangereader.RangeReaderConfig {
 }
 
 func (r *Read) Start(ctx context.Context) error {
-	if err := r.files.MkdirAll(r.blockDir, blockCacheDirMode); err != nil {
-		return fmt.Errorf("core: read: block cache directory: %w", err)
+	if err := r.prepareBlockDir(); err != nil {
+		return err
 	}
 	if err := r.Cache.Start(ctx); err != nil {
 		return fmt.Errorf("core: read: start block cache: %w", err)
@@ -137,6 +137,16 @@ func (r *Read) Start(ctx context.Context) error {
 	if err := r.Ranges.Start(ctx); err != nil {
 		_ = r.Cache.Close(ctx)
 		return fmt.Errorf("core: read: start range reader: %w", err)
+	}
+	return nil
+}
+
+func (r *Read) prepareBlockDir() error {
+	if r.Cache.Stats().LimitBytes == 0 {
+		return nil
+	}
+	if err := r.files.MkdirAll(r.blockDir, blockCacheDirMode); err != nil {
+		return fmt.Errorf("core: read: block cache directory: %w", err)
 	}
 	return nil
 }
