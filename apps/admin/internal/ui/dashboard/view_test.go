@@ -194,6 +194,24 @@ func TestRendersMergedStatusAndUsage(t *testing.T) {
 	}
 }
 
+func TestBlockCacheOffShowsOff(t *testing.T) {
+	c := sampleClient()
+	c.usage.BlockCache = adminv1.CacheUsage{HitRatio1h: 0.5}
+	s, v := newTestScreen(t, c, &fakeNav{}, nil, &fakeClipboard{})
+	v.Refresh(context.Background())
+	text := joined(s.Content())
+	for _, want := range []string{"Block cache", "Off", "Spool"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rendered text lacks %q\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"0 B of 0 B", "no limit set", "Hit ratio", "50%"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("block cache off still renders %q\n%s", unwanted, text)
+		}
+	}
+}
+
 func TestReplicaCardShownWhenAvailable(t *testing.T) {
 	c := sampleClient()
 	c.status.Replica = adminv1.ReplicaSummary{State: "linked", PendingOps: 4}

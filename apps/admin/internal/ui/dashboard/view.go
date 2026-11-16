@@ -309,13 +309,23 @@ func cacheRows(s vm.State) []fyne.CanvasObject {
 		return []fyne.CanvasObject{placeholderRow()}
 	}
 	u := s.Usage
+	rows := blockCacheRows(s)
+	return append(rows,
+		widget.NewLabel("Spool"),
+		progressRow(s.SpoolFraction(), usedOfLimitText(u.Spool.UsedBytes, u.Spool.LimitBytes)),
+		pairRow("Jobs in flight", strconv.Itoa(u.Spool.JobsInFlight)),
+	)
+}
+
+func blockCacheRows(s vm.State) []fyne.CanvasObject {
+	if s.BlockCacheOff() {
+		return []fyne.CanvasObject{pairRow("Block cache", "Off")}
+	}
+	u := s.Usage
 	return []fyne.CanvasObject{
 		widget.NewLabel("Block cache"),
 		progressRow(s.CacheFraction(), usedOfLimitText(u.BlockCache.UsedBytes, u.BlockCache.LimitBytes)),
 		pairRow("Hit ratio (1 h)", percentText(u.BlockCache.HitRatio1h)),
-		widget.NewLabel("Spool"),
-		progressRow(s.SpoolFraction(), usedOfLimitText(u.Spool.UsedBytes, u.Spool.LimitBytes)),
-		pairRow("Jobs in flight", strconv.Itoa(u.Spool.JobsInFlight)),
 	}
 }
 
