@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	confirmCreateAnswer = "yes"
+	confirmCreateAnswer  = "yes"
+	createRegistryPrompt = "type " + confirmCreateAnswer + " to create a new registry"
 )
 
 type RegistryOptions struct {
@@ -128,7 +129,7 @@ func (r *registrySetup) confirmExisting(ctx context.Context, existing buckets.Re
 
 func (r *registrySetup) createWithConfirmation(ctx context.Context) (RegistryOutcome, error) {
 	r.deps.Terminal.Say("No butterDB registry was found in this Telegram account.")
-	answer, err := r.deps.Terminal.Prompt("type " + confirmCreateAnswer + " to create a new registry")
+	answer, err := r.deps.Terminal.Prompt(createRegistryPrompt)
 	if err != nil {
 		return RegistryOutcome{}, fmt.Errorf("core: registry setup: %w", err)
 	}

@@ -173,6 +173,14 @@ type limitedRelay struct {
 	inner   setup.LoginRelay
 	limiter *session.Limiter
 	backend *BackendSlot
+	links   LinkObserver
+}
+
+func (r *limitedRelay) linked(snap identity.Snapshot) identity.Snapshot {
+	if r.links != nil && snap.State == identity.StateLinked {
+		r.links.AccountLinked()
+	}
+	return snap
 }
 
 func (r *limitedRelay) Status(ctx context.Context) (identity.Snapshot, error) {
@@ -198,11 +206,19 @@ func (r *limitedRelay) Start(ctx context.Context, phone string) (identity.Snapsh
 }
 
 func (r *limitedRelay) SubmitCode(ctx context.Context, loginID, code string) (identity.Snapshot, error) {
-	return r.inner.SubmitCode(ctx, loginID, code)
+	snap, err := r.inner.SubmitCode(ctx, loginID, code)
+	if err != nil {
+		return snap, err
+	}
+	return r.linked(snap), nil
 }
 
 func (r *limitedRelay) SubmitPassword(ctx context.Context, loginID, password string) (identity.Snapshot, error) {
-	return r.inner.SubmitPassword(ctx, loginID, password)
+	snap, err := r.inner.SubmitPassword(ctx, loginID, password)
+	if err != nil {
+		return snap, err
+	}
+	return r.linked(snap), nil
 }
 
 func (r *limitedRelay) Cancel(ctx context.Context) (identity.Snapshot, error) {
@@ -211,8 +227,12 @@ func (r *limitedRelay) Cancel(ctx context.Context) (identity.Snapshot, error) {
 
 func (r *limitedRelay) Unlink(ctx context.Context) (identity.Snapshot, error) {
 	snap, err := r.inner.Unlink(ctx)
-	if err == nil {
-		r.backend.Clear()
+	if err != nil {
+		return snap, err
 	}
-	return snap, err
+	r.backend.Clear()
+	if r.links != nil {
+		r.links.AccountUnlinked()
+	}
+	return snap, nil
 }

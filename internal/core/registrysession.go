@@ -52,3 +52,14 @@ func (s *TelegramSession) EnsureRegistry(ctx context.Context, terminal Terminal,
 		Logger:        s.app.logger,
 	}, opts)
 }
+
+func (s *TelegramSession) StorageTransport(ctx context.Context) (StorageTransport, error) {
+	transport, err := s.Transport(ctx)
+	if err != nil {
+		return StorageTransport{}, err
+	}
+	return StorageTransport{
+		Channels: transport.Channels, Sender: transport.Sender, Prepaced: transport.Prepaced, Reader: transport.Reader,
+		Signals: transport.Activity, Pacer: transport.Flow.Limiter,
+	}, nil
+}

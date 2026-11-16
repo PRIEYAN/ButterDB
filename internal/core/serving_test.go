@@ -91,7 +91,7 @@ func TestStartServingKeepsAdminReachableWhenUnlinked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StartServing: %v", err)
 	}
-	if serving.Runtime != nil || serving.Backend.Current() != nil {
+	if serving.Runtime() != nil || serving.Backend.Current() != nil {
 		t.Fatal("an unlinked deployment started a storage runtime")
 	}
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
