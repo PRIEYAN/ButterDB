@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd966"/>
+      <stop offset="1" stop-color="#f2a900"/>
+    </linearGradient>
+    <linearGradient id="pat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff4c2"/>
+      <stop offset="1" stop-color="#ffe27a"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" ry="200" fill="url(#bg)"/>
+  <ellipse cx="512" cy="760" rx="330" ry="70" fill="#b87a00" opacity="0.35"/>
+  <path d="M192 420 L512 300 L832 420 L832 700 L512 820 L192 700 Z" fill="#e0a000"/>
+  <path d="M192 420 L512 540 L512 820 L192 700 Z" fill="#ffd24d"/>
+  <path d="M832 420 L512 540 L512 820 L832 700 Z" fill="#f5b800"/>
+  <path d="M192 420 L512 300 L832 420 L512 540 Z" fill="url(#pat)"/>
+  <path d="M272 450 L512 360 L752 450 L512 540 Z" fill="#fff9e0" opacity="0.7"/>
+  <g fill="none" stroke="#8a5a00" stroke-width="26" stroke-linecap="round">
+    <path d="M250 600 L470 682"/>
+    <path d="M250 660 L470 742"/>
+  </g>
+  <g fill="#8a5a00">
+    <circle cx="590" cy="640" r="22"/>
+    <circle cx="590" cy="700" r="22"/>
+    <circle cx="590" cy="760" r="22"/>
+  </g>
+</svg>
