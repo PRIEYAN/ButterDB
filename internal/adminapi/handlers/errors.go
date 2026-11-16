@@ -75,6 +75,7 @@ func (e *DigestMismatchError) Is(target error) bool {
 }
 
 const (
+	statusClientClosedRequest  = 499
 	defaultFloodWaitRetry      = 5 * time.Second
 	uncertainOutcomeRetry      = 30 * time.Second
 	serverNotReadyRetry        = 5 * time.Second
@@ -437,6 +438,12 @@ func mapErrs(err error) (adminv1.APIError, bool) {
 		if errors.Is(err, entry.sentinel) {
 			return entry.build(), true
 		}
+	}
+	if errors.Is(err, context.Canceled) {
+		e := apiError(adminv1.CodeInternal, nil)
+		e.Status = statusClientClosedRequest
+		e.Body.Retryable = true
+		return e, true
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return apiError(adminv1.CodeTelegramUnavailable, nil), true

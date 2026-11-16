@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -483,6 +486,57 @@ func TestMapErrorDetails(t *testing.T) {
 		got := MapError(errors.New("secret-token-value in message"))
 		if strings.Contains(got.Body.Message, "secret") || strings.Contains(got.Body.Hint, "secret") {
 			t.Fatalf("message leaks error text: %+v", got.Body)
+		}
+	})
+}
+
+func TestPanicHandling(t *testing.T) {
+	t.Run("ordinary panic becomes an internal envelope", func(t *testing.T) {
+		h := newHarness(t)
+		h.server.panics = "boom"
+		w := h.do(request{method: http.MethodGet, path: "/admin/v1/buckets/photos/object?key=a"})
+		assertError(t, w, 500, adminv1.CodeInternal)
+	})
+	t.Run("abort handler panic is re-raised", func(t *testing.T) {
+		h := newHarness(t)
+		h.server.panics = http.ErrAbortHandler
+		defer func() {
+			if recovered := recover(); recovered != http.ErrAbortHandler {
+				t.Fatalf("recovered %v, want http.ErrAbortHandler", recovered)
+			}
+		}()
+		h.do(request{method: http.MethodGet, path: "/admin/v1/buckets/photos/object?key=a"})
+		t.Fatal("ServeHTTP swallowed http.ErrAbortHandler")
+	})
+}
+
+func TestClientCancellation(t *testing.T) {
+	mapped := MapError(fmt.Errorf("put: %w", context.Canceled))
+	if mapped.Status != 499 || mapped.Body.Code != adminv1.CodeInternal || !mapped.Body.Retryable {
+		t.Fatalf("MapError(context.Canceled) = %+v", mapped)
+	}
+	t.Run("response is a bare 499 without a body", func(t *testing.T) {
+		h := newHarness(t)
+		h.server.err = fmt.Errorf("serve: %w", context.Canceled)
+		w := h.do(request{method: http.MethodGet, path: "/admin/v1/buckets/photos/object?key=a"})
+		if w.Code != 499 || w.Body.Len() != 0 {
+			t.Fatalf("status %d body %q", w.Code, w.Body.String())
+		}
+	})
+	t.Run("no error level log", func(t *testing.T) {
+		h := newHarness(t)
+		var logs bytes.Buffer
+		deps := h.dependencies()
+		deps.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		router, err := NewRouter(deps)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.server.err = context.Canceled
+		r := httptest.NewRequest(http.MethodGet, "/admin/v1/buckets/photos/object?key=a", nil)
+		router.ServeHTTP(httptest.NewRecorder(), r)
+		if logs.Len() != 0 {
+			t.Fatalf("canceled request logged: %s", logs.String())
 		}
 	})
 }

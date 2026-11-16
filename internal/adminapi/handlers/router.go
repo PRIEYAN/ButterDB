@@ -163,6 +163,9 @@ func (a *api) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) recoverPanic(w http.ResponseWriter, r *http.Request) {
 	if recovered := recover(); recovered != nil {
+		if recovered == http.ErrAbortHandler {
+			panic(recovered)
+		}
 		a.writeError(w, r, fmt.Errorf("handlers: panic: %v", recovered))
 	}
 }

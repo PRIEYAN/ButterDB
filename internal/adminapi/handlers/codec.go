@@ -121,6 +121,11 @@ func (a *api) writeNoContent(w http.ResponseWriter) {
 func (a *api) writeError(w http.ResponseWriter, r *http.Request, err error) {
 	mapped := MapError(err)
 	mapped.Body.RequestID = RequestIDFromContext(r.Context())
+	if errors.Is(err, context.Canceled) {
+		a.deps.Logger.DebugContext(r.Context(), "admin api request canceled by the client", "request_id", mapped.Body.RequestID, "method", r.Method, "path", r.URL.Path)
+		w.WriteHeader(mapped.Status)
+		return
+	}
 	if mapped.Body.Code == adminv1.CodeInternal {
 		a.deps.Logger.ErrorContext(r.Context(), "admin api internal error", "request_id", mapped.Body.RequestID, "method", r.Method, "path", r.URL.Path, "error", err)
 	}
