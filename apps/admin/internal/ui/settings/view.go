@@ -15,6 +15,12 @@ import (
 )
 
 const (
+	pageKicker      = "admin / settings"
+	sectionsLabel   = "settings"
+	cardLabelPrefix = "settings/"
+	gridGap         = 8
+	pairNameEms     = 12
+
 	stepConnection  = "connection"
 	stepDevice      = "device"
 	stepDevices     = "devices"
@@ -83,6 +89,7 @@ func (w *view) build() {
 	w.problem = container.NewVBox()
 	w.notice = widget.NewLabel("")
 	w.notice.Hide()
+	notice := shell.NewCallout(shell.CalloutInfo, w.notice)
 	objects := make([]fyne.CanvasObject, 0, len(w.entries))
 	for _, e := range w.entries {
 		objects = append(objects, e.panel.object())
@@ -90,7 +97,9 @@ func (w *view) build() {
 	w.stack = container.NewStack(objects...)
 	w.list = widget.NewList(
 		func() int { return len(w.entries) },
-		func() fyne.CanvasObject { return widget.NewLabel("Telegram account") },
+		func() fyne.CanvasObject {
+			return widget.NewLabelWithStyle("Telegram account", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+		},
 		func(id widget.ListItemID, item fyne.CanvasObject) {
 			item.(*widget.Label).SetText(w.entries[id].title)
 		},
@@ -101,10 +110,12 @@ func (w *view) build() {
 		}
 		w.showStep(w.entries[id].step, false)
 	}
-	body := container.NewBorder(container.NewVBox(w.problem, w.notice), nil, nil, nil, w.stack)
-	split := container.NewHSplit(w.list, body)
-	split.SetOffset(0.22)
-	w.root = split
+	body := container.NewBorder(container.NewVBox(w.problem, notice), nil, nil, nil, w.stack)
+	sections := shell.Inset(0, gridGap, gridGap, 0, shell.NewFlushWindowCard(sectionsLabel, w.list))
+	split := container.NewHSplit(sections, shell.Inset(0, 0, 0, gridGap, body))
+	split.SetOffset(0)
+	header := shell.NewPageHeader(pageKicker, shell.NewHeading("Settings"))
+	w.root = container.NewBorder(header, nil, nil, nil, split)
 	w.showStep(stepConnection, true)
 }
 
@@ -289,12 +300,11 @@ func (w *view) deliverRoute(p model.Problem, key string) {
 }
 
 func problemStrip(p model.Problem) fyne.CanvasObject {
-	rows := []fyne.CanvasObject{widget.NewLabelWithStyle(p.Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})}
+	rows := []fyne.CanvasObject{shell.NewFieldLabel(p.Title)}
 	if p.Body != "" {
 		rows = append(rows, newWrapped(p.Body))
 	}
-	icon := widget.NewIcon(theme.NewWarningThemedResource(theme.WarningIcon()))
-	return container.NewBorder(nil, nil, icon, nil, container.NewVBox(rows...))
+	return container.NewVBox(shell.NewCallout(shell.CalloutWarning, container.NewVBox(rows...)), shell.NewSectionGap())
 }
 
 func newWrapped(text string) *widget.Label {
@@ -304,7 +314,19 @@ func newWrapped(text string) *widget.Label {
 }
 
 func heading(text string) fyne.CanvasObject {
-	return widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	return shell.NewFieldLabel(text)
+}
+
+func sectionCard(step, title string, content fyne.CanvasObject) fyne.CanvasObject {
+	return shell.Inset(0, gridGap, gridGap, 0, shell.NewWindowCard(cardLabelPrefix+step, title, content))
+}
+
+func scrolledCard(step, title string, content fyne.CanvasObject) fyne.CanvasObject {
+	return shell.ScrollBody(shell.NewWindowCard(cardLabelPrefix+step, title, content))
+}
+
+func nameCell(name string) fyne.CanvasObject {
+	return container.NewStack(shell.FixedSpace(theme.TextSize()*pairNameEms, 0), shell.NewFieldLabel(name))
 }
 
 func fill(box *fyne.Container, rows []fyne.CanvasObject) {
@@ -316,7 +338,14 @@ func pairRow(name, value string) fyne.CanvasObject {
 	label := widget.NewLabel(value)
 	label.Selectable = true
 	label.Wrapping = fyne.TextWrapBreak
-	return container.NewBorder(nil, nil, widget.NewLabelWithStyle(name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), nil, label)
+	return container.NewBorder(nil, nil, nameCell(name), nil, label)
+}
+
+func monoPairRow(name, value string) fyne.CanvasObject {
+	label := shell.NewMono(value)
+	label.Selectable = true
+	label.Wrapping = fyne.TextWrapBreak
+	return container.NewBorder(nil, nil, nameCell(name), nil, label)
 }
 
 func scrolled(content fyne.CanvasObject) fyne.CanvasObject {

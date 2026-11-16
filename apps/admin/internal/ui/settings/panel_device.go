@@ -33,8 +33,8 @@ func newDevicePanel(w *view) *devicePanel {
 	p.save = widget.NewButtonWithIcon("Save name", theme.DocumentSaveIcon(), p.onSave)
 	p.facts = container.NewVBox()
 	p.rotate = widget.NewButtonWithIcon("Rotate token now", theme.ViewRefreshIcon(), p.onRotate)
-	nameRow := container.NewBorder(nil, nil, widget.NewLabelWithStyle("Name", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), p.save, p.name)
-	p.root = scrolled(container.NewVBox(heading("This device"), nameRow, p.facts, p.rotate))
+	nameRow := container.NewBorder(nil, nil, nameCell("Name"), shell.Action(p.save), p.name)
+	p.root = scrolledCard(stepDevice, "This device", container.NewVBox(nameRow, p.facts, shell.NewSectionGap(), container.NewHBox(shell.Action(p.rotate))))
 	return p
 }
 
@@ -58,8 +58,8 @@ func (p *devicePanel) update(s vm.State) {
 	now := p.w.vm.Now()
 	rows := []fyne.CanvasObject{
 		pairRow("Created via", orDash(current.CreatedVia)),
-		pairRow("Platform", orDash(current.Platform)),
-		pairRow("Token issued", timeWithAge(tokenIssuedAt(s, current), now)),
+		monoPairRow("Platform", orDash(current.Platform)),
+		monoPairRow("Token issued", timeWithAge(tokenIssuedAt(s, current), now)),
 	}
 	fill(p.facts, rows)
 }

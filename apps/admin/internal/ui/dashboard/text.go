@@ -36,6 +36,16 @@ func statusIcon(word string) fyne.Resource {
 	return theme.NewWarningThemedResource(theme.WarningIcon())
 }
 
+func statusGlyph(word string) fyne.Resource {
+	switch word {
+	case statusOK:
+		return theme.ConfirmIcon()
+	case statusDown:
+		return theme.ErrorIcon()
+	}
+	return theme.WarningIcon()
+}
+
 func componentWord(status string) string {
 	switch status {
 	case statusOK, statusDegraded, statusDown:

@@ -8,10 +8,9 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings/vm"
 )
-
-const auditColumns = 7
 
 type activityPanel struct {
 	w        *view
@@ -38,8 +37,9 @@ func newActivityPanel(w *view) *activityPanel {
 		w.run(func(ctx context.Context) { w.vm.LoadMoreActivity(ctx) })
 	})
 	p.loadMore.Hide()
-	toolbar := container.NewBorder(nil, nil, container.NewHBox(heading("Activity"), p.filter), refresh)
-	p.root = container.NewBorder(toolbar, p.loadMore, nil, nil, scrolled(p.rows))
+	toolbar := container.NewVBox(container.NewBorder(nil, nil, container.NewHBox(heading("Filter"), shell.FramedInput(p.filter)), shell.Action(refresh)), shell.VerticalSpace(gridGap))
+	more := container.NewHBox(shell.Action(p.loadMore))
+	p.root = sectionCard(stepActivity, "Activity", container.NewBorder(toolbar, more, nil, nil, scrolled(p.rows)))
 	return p
 }
 
@@ -68,17 +68,19 @@ func (p *activityPanel) update(s vm.State) {
 	p.filter.SetSelected(filterLabel(a.Filter))
 	p.syncing = false
 	now := p.w.vm.Now()
-	grid := container.NewGridWithColumns(auditColumns, auditHeader()...)
+	rows := []fyne.CanvasObject{shell.NewWeightedRow(auditWeights(), auditHeader()...), widget.NewSeparator()}
 	for _, e := range a.Events {
-		grid.Add(cell(auditTimeText(e.At, now)))
-		grid.Add(cell(vm.ActorText(e.Actor)))
-		grid.Add(cell(e.Action))
-		grid.Add(cell(orDash(e.Target)))
-		grid.Add(cell(orDash(e.Outcome)))
-		grid.Add(cell(orDash(e.ErrorCode)))
-		grid.Add(cell(orDash(e.RemoteAddr)))
+		rows = append(rows, shell.NewWeightedRow(auditWeights(),
+			dataCell(auditTimeText(e.At, now), true),
+			cell(vm.ActorText(e.Actor)),
+			dataCell(e.Action, true),
+			cell(orDash(e.Target)),
+			cell(orDash(e.Outcome)),
+			dataCell(orDash(e.ErrorCode), true),
+			dataCell(orDash(e.RemoteAddr), true),
+		), widget.NewSeparator())
 	}
-	fill(p.rows, []fyne.CanvasObject{grid})
+	fill(p.rows, rows)
 	if a.HasMore() {
 		p.loadMore.Show()
 		return

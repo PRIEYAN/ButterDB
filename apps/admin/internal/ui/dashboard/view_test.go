@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/dashboard/vm"
 )
 
@@ -117,10 +117,11 @@ func walk(o fyne.CanvasObject, fn func(fyne.CanvasObject)) {
 		for _, child := range c.Objects {
 			walk(child, fn)
 		}
-	case *widget.Card:
-		walk(c.Content, fn)
-	case *container.Scroll:
-		walk(c.Content, fn)
+	case *widget.Label, *widget.Button:
+	case fyne.Widget:
+		for _, child := range test.WidgetRenderer(c).Objects() {
+			walk(child, fn)
+		}
 	}
 }
 
@@ -135,10 +136,10 @@ func visibleTexts(o fyne.CanvasObject) []string {
 			out = append(out, w.Text)
 		case *widget.Button:
 			out = append(out, w.Text)
-		case *widget.ProgressBar:
-			out = append(out, w.TextFormatter())
-		case *widget.Card:
+		case *shell.WindowCard:
 			out = append(out, w.Title)
+		case *shell.Badge:
+			out = append(out, w.Text())
 		}
 	})
 	return out
@@ -147,7 +148,7 @@ func visibleTexts(o fyne.CanvasObject) []string {
 func hidden(o fyne.CanvasObject, title string) bool {
 	found := false
 	walk(o, func(co fyne.CanvasObject) {
-		if card, ok := co.(*widget.Card); ok && card.Title == title {
+		if card, ok := co.(*shell.WindowCard); ok && card.Title == title {
 			found = !card.Visible()
 		}
 	})

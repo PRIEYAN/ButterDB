@@ -39,12 +39,12 @@ func newConnectionPanel(w *view) *connectionPanel {
 	switchServer := widget.NewButtonWithIcon("Switch server", theme.LogoutIcon(), func() {
 		w.nav.Navigate(model.RouteConnect, nil)
 	})
-	labelRow := container.NewBorder(nil, nil, widget.NewLabelWithStyle("Label", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), p.save, p.label)
-	p.root = scrolled(container.NewVBox(
-		heading("Connection"),
+	labelRow := container.NewBorder(nil, nil, nameCell("Label"), shell.Action(p.save), p.label)
+	p.root = scrolledCard(stepConnection, "Connection", container.NewVBox(
 		labelRow,
 		p.facts,
-		container.NewHBox(p.move, p.reverify, switchServer),
+		shell.NewSectionGap(),
+		shell.Actions(p.move, p.reverify, switchServer),
 		p.verdict,
 	))
 	return p
@@ -84,8 +84,8 @@ func (p *connectionPanel) factRows(c vm.ConnectionState) []fyne.CanvasObject {
 	rows := []fyne.CanvasObject{
 		shell.NewCopyField("URL", c.Profile.BaseURL, p.w.clip),
 		shell.NewCopyField("Server ID", c.Profile.ServerID, p.w.clip),
-		pairRow("Server version", orDash(c.ServerVersion)),
-		pairRow("Server state", orDash(c.ServerState)),
+		monoPairRow("Server version", orDash(c.ServerVersion)),
+		monoPairRow("Server state", orDash(c.ServerState)),
 		pairRow("Trust", trustText(c.Profile.Trust)),
 	}
 	if c.FingerprintDisplay != "" {
@@ -109,11 +109,11 @@ func (p *connectionPanel) verdictRows(r vm.ReverifyResult) []fyne.CanvasObject {
 func changedRows(r vm.ReverifyResult) []fyne.CanvasObject {
 	rows := []fyne.CanvasObject{iconText(theme.NewErrorThemedResource(theme.ErrorIcon()), "The server presents a different certificate than this device trusts.")}
 	if r.Expected != "" {
-		rows = append(rows, pairRow("Trusted", strings.ReplaceAll(r.Expected, "\n", " ")))
+		rows = append(rows, monoPairRow("Trusted", strings.ReplaceAll(r.Expected, "\n", " ")))
 	}
-	return append(rows, pairRow("Presented", strings.ReplaceAll(r.Got, "\n", " ")))
+	return append(rows, monoPairRow("Presented", strings.ReplaceAll(r.Got, "\n", " ")))
 }
 
 func iconText(icon fyne.Resource, text string) fyne.CanvasObject {
-	return container.NewBorder(nil, nil, widget.NewIcon(icon), nil, newWrapped(text))
+	return container.NewVBox(shell.NewSectionGap(), container.NewBorder(nil, nil, widget.NewIcon(icon), nil, newWrapped(text)))
 }

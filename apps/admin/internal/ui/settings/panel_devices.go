@@ -25,7 +25,8 @@ func newDevicesPanel(w *view) *devicesPanel {
 	refresh := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() {
 		w.run(func(ctx context.Context) { w.vm.RefreshDevices(ctx) })
 	})
-	p.root = container.NewBorder(container.NewBorder(nil, nil, heading("Devices"), refresh), nil, nil, nil, scrolled(p.rows))
+	toolbar := container.NewVBox(container.NewBorder(nil, nil, nil, shell.Action(refresh)), shell.VerticalSpace(gridGap))
+	p.root = sectionCard(stepDevices, "Devices", container.NewBorder(toolbar, nil, nil, nil, scrolled(p.rows)))
 	return p
 }
 
@@ -33,14 +34,24 @@ func (p *devicesPanel) object() fyne.CanvasObject { return p.root }
 
 func (p *devicesPanel) update(s vm.State) {
 	now := p.w.vm.Now()
-	grid := container.NewGridWithColumns(deviceColumns, headerCells()...)
+	rows := []fyne.CanvasObject{shell.NewWeightedRow(deviceWeights(), headerCells()...), widget.NewSeparator()}
 	for _, row := range s.Devices.Rows {
-		for _, text := range deviceRowText(row, now) {
-			grid.Add(cell(text))
+		cells := make([]fyne.CanvasObject, 0, deviceColumns)
+		for i, text := range deviceRowText(row, now) {
+			cells = append(cells, dataCell(text, i > 0))
 		}
-		grid.Add(p.revokeCell(row))
+		cells = append(cells, p.revokeCell(row))
+		rows = append(rows, shell.NewWeightedRow(deviceWeights(), cells...), widget.NewSeparator())
 	}
-	fill(p.rows, []fyne.CanvasObject{grid})
+	fill(p.rows, rows)
+}
+
+func deviceWeights() []float32 {
+	return []float32{2.2, 1.3, 1.2, 1.1, 1.1, 1.3, 1.4}
+}
+
+func auditWeights() []float32 {
+	return []float32{1.5, 1.1, 1.8, 1.2, 0.9, 1.7, 1.5}
 }
 
 func headerCells() []fyne.CanvasObject {
@@ -53,8 +64,13 @@ func headerCells() []fyne.CanvasObject {
 }
 
 func cell(text string) fyne.CanvasObject {
+	return dataCell(text, false)
+}
+
+func dataCell(text string, mono bool) fyne.CanvasObject {
 	label := widget.NewLabel(text)
-	label.Wrapping = fyne.TextWrapBreak
+	label.TextStyle = fyne.TextStyle{Monospace: mono}
+	label.Wrapping = fyne.TextWrapWord
 	label.Selectable = true
 	return label
 }
@@ -67,7 +83,7 @@ func (p *devicesPanel) revokeCell(row vm.DeviceRow) fyne.CanvasObject {
 	name := row.Device.Name
 	button := widget.NewButtonWithIcon("Revoke…", theme.DeleteIcon(), func() { p.confirmRevoke(id, name, row.This) })
 	button.Importance = widget.DangerImportance
-	return button
+	return container.NewVBox(shell.Action(button))
 }
 
 func (p *devicesPanel) confirmRevoke(id, name string, this bool) {

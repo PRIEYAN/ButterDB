@@ -25,13 +25,12 @@ func newTelegramPanel(w *view) *telegramPanel {
 	p.unlink = widget.NewButtonWithIcon("Unlink…", theme.DeleteIcon(), p.confirmUnlink)
 	p.unlink.Importance = widget.DangerImportance
 	p.unlink.Disable()
-	p.root = scrolled(container.NewVBox(
-		heading("Telegram account"),
+	p.root = scrolledCard(stepTelegram, "Telegram account", container.NewVBox(
 		p.facts,
-		widget.NewSeparator(),
-		heading("Account safety"),
-		newWrapped(safetyNotice),
-		p.unlink,
+		shell.NewSectionGap(),
+		shell.NewCallout(shell.CalloutWarning, container.NewVBox(heading("Account safety"), newWrapped(safetyNotice))),
+		shell.NewSectionGap(),
+		container.NewHBox(shell.Action(p.unlink)),
 	))
 	return p
 }
@@ -60,8 +59,8 @@ func (p *telegramPanel) rows(t vm.TelegramState) []fyne.CanvasObject {
 	if a.Username != "" {
 		rows = append(rows, pairRow("Username", "@"+a.Username))
 	}
-	rows = append(rows, pairRow("Phone", orDash(a.PhoneMasked)))
-	rows = append(rows, pairRow("Linked", timeWithAge(a.LinkedAt, p.w.vm.Now())))
+	rows = append(rows, monoPairRow("Phone", orDash(a.PhoneMasked)))
+	rows = append(rows, monoPairRow("Linked", timeWithAge(a.LinkedAt, p.w.vm.Now())))
 	if a.Connected {
 		return append(rows, pairRow("Connection", "Connected"))
 	}

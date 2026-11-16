@@ -17,7 +17,11 @@ import (
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/dashboard/vm"
 )
 
-const endpointsHint = "Use these with any AWS SDK: endpoint, region, path-style addressing."
+const (
+	endpointsHint = "Use these with any AWS SDK: endpoint, region, path-style addressing."
+	pageKicker    = "admin / dashboard"
+	pairNameEms   = 12
+)
 
 type view struct {
 	vm       *vm.ViewModel
@@ -35,7 +39,8 @@ type view struct {
 	cache    *fyne.Container
 	comps    *fyne.Container
 	ends     *fyne.Container
-	replica  *widget.Card
+	replica  *shell.WindowCard
+	headline *shell.WindowCard
 	replBody *fyne.Container
 
 	mu          sync.Mutex
@@ -57,23 +62,25 @@ func newView(v *vm.ViewModel, nav shell.Navigator, n shell.Notifier, clip model.
 
 func (w *view) build() {
 	w.problem = container.NewVBox()
-	w.updated = widget.NewLabel("")
+	w.updated = shell.NewKicker("")
 	w.refresh = widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), w.onRefresh)
 	w.server, w.telegram, w.storage = container.NewVBox(), container.NewVBox(), container.NewVBox()
 	w.cache, w.comps, w.ends = container.NewVBox(), container.NewVBox(), container.NewVBox()
 	w.replBody = container.NewVBox()
-	w.replica = widget.NewCard("Replica", "", w.replBody)
-	cards := container.NewGridWithColumns(2,
-		widget.NewCard("Server", "", w.server),
-		widget.NewCard("Telegram", "", w.telegram),
-		widget.NewCard("Storage", "", w.storage),
-		widget.NewCard("Cache and spool", "", w.cache),
-		widget.NewCard("Components", "", w.comps),
-		widget.NewCard("Endpoints", "", w.ends),
+	w.replica = shell.NewWindowCard("dashboard/replica", "Replica", w.replBody)
+	w.headline = shell.NewHighlightCard("dashboard/server", "Server", w.server)
+	cards := shell.NewCardGrid(2,
+		shell.NewWindowCard("dashboard/telegram", "Telegram", w.telegram),
+		shell.NewWindowCard("dashboard/storage", "Storage", w.storage),
+		shell.NewWindowCard("dashboard/cache", "Cache and spool", w.cache),
+		shell.NewWindowCard("dashboard/components", "Components", w.comps),
+		shell.NewWindowCard("dashboard/endpoints", "Endpoints", w.ends),
 		w.replica,
 	)
-	header := container.NewBorder(nil, nil, nil, container.NewHBox(w.updated, w.refresh), widget.NewLabelWithStyle("Dashboard", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-	w.root = container.NewBorder(container.NewVBox(header, w.problem), nil, nil, nil, container.NewVScroll(cards))
+	trailing := container.NewHBox(container.NewCenter(w.updated), shell.Action(w.refresh))
+	header := shell.NewPageHeader(pageKicker, shell.NewHeading("Dashboard"), trailing)
+	body := container.NewVBox(w.headline, shell.NewSectionGap(), cards)
+	w.root = container.NewBorder(container.NewVBox(header, w.problem), nil, nil, nil, shell.ScrollBody(body))
 }
 
 func (w *view) setContext(ctx context.Context) {
@@ -98,6 +105,7 @@ func (w *view) render(s vm.State) {
 	w.toggleRefresh(s.Loading)
 	w.updated.SetText(updatedText(s, now))
 	fill(w.server, serverRows(s))
+	w.headline.Refresh()
 	fill(w.telegram, telegramRows(s, now))
 	fill(w.storage, storageRows(s))
 	fill(w.cache, cacheRows(s))
@@ -212,12 +220,11 @@ func fill(box *fyne.Container, rows []fyne.CanvasObject) {
 }
 
 func problemStrip(p model.Problem) fyne.CanvasObject {
-	rows := []fyne.CanvasObject{widget.NewLabelWithStyle(p.Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})}
+	rows := []fyne.CanvasObject{shell.NewFieldLabel(p.Title)}
 	if p.Body != "" {
 		rows = append(rows, newWrapped(p.Body))
 	}
-	icon := widget.NewIcon(statusIcon(statusDegraded))
-	return container.NewBorder(nil, nil, icon, nil, container.NewVBox(rows...))
+	return container.NewVBox(shell.NewCallout(shell.CalloutWarning, container.NewVBox(rows...)), shell.NewSectionGap())
 }
 
 func newWrapped(text string) *widget.Label {
@@ -234,17 +241,24 @@ func statusRow(word, text string) fyne.CanvasObject {
 	return container.NewHBox(widget.NewIcon(statusIcon(word)), widget.NewLabel(text))
 }
 
-func pairRow(name, value string) fyne.CanvasObject {
-	label := widget.NewLabel(value)
-	label.Selectable = true
-	return container.NewHBox(widget.NewLabelWithStyle(name, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), label)
+func nameCell(name string) fyne.CanvasObject {
+	return container.NewStack(shell.FixedSpace(theme.TextSize()*pairNameEms, 0), shell.NewFieldLabel(name))
 }
 
-func progressRow(fraction float64, text string) fyne.CanvasObject {
-	bar := widget.NewProgressBar()
-	bar.TextFormatter = func() string { return text }
-	bar.SetValue(fraction)
-	return bar
+func pairRow(name, value string) fyne.CanvasObject {
+	label := shell.NewMono(value)
+	label.Selectable = true
+	return container.NewBorder(nil, nil, nameCell(name), nil, label)
+}
+
+func textRow(name, value string) fyne.CanvasObject {
+	label := widget.NewLabel(value)
+	label.Selectable = true
+	return container.NewBorder(nil, nil, nameCell(name), nil, label)
+}
+
+func meterRow(name string, fraction float64, text string) fyne.CanvasObject {
+	return container.NewVBox(shell.NewFieldLabel(name), shell.NewMeter(fraction, text))
 }
 
 func serverRows(s vm.State) []fyne.CanvasObject {
@@ -252,11 +266,13 @@ func serverRows(s vm.State) []fyne.CanvasObject {
 		return []fyne.CanvasObject{placeholderRow()}
 	}
 	st := s.Status
-	return []fyne.CanvasObject{
-		statusRow(serverStatusWord(st.State), "State: "+st.State),
+	word := serverStatusWord(st.State)
+	state := container.NewHBox(widget.NewIcon(shell.OnAccentIcon(statusGlyph(word))), widget.NewLabel("State: "+st.State))
+	return []fyne.CanvasObject{container.NewGridWithColumns(3,
+		state,
 		pairRow("Version", versionText(st.ServerVersion, st.Commit)),
 		pairRow("Uptime", uptimeText(st.UptimeSeconds)),
-	}
+	)}
 }
 
 func telegramRows(s vm.State, now time.Time) []fyne.CanvasObject {
@@ -280,7 +296,7 @@ func accountRow(a *adminv1.TelegramAccount, linked bool) fyne.CanvasObject {
 	if a.Username != "" {
 		name += " @" + a.Username
 	}
-	return pairRow("Account", name)
+	return textRow("Account", name)
 }
 
 func connectionRow(t adminv1.TelegramHealth) fyne.CanvasObject {
@@ -311,20 +327,18 @@ func cacheRows(s vm.State) []fyne.CanvasObject {
 	u := s.Usage
 	rows := blockCacheRows(s)
 	return append(rows,
-		widget.NewLabel("Spool"),
-		progressRow(s.SpoolFraction(), usedOfLimitText(u.Spool.UsedBytes, u.Spool.LimitBytes)),
+		meterRow("Spool", s.SpoolFraction(), usedOfLimitText(u.Spool.UsedBytes, u.Spool.LimitBytes)),
 		pairRow("Jobs in flight", strconv.Itoa(u.Spool.JobsInFlight)),
 	)
 }
 
 func blockCacheRows(s vm.State) []fyne.CanvasObject {
 	if s.BlockCacheOff() {
-		return []fyne.CanvasObject{pairRow("Block cache", "Off")}
+		return []fyne.CanvasObject{container.NewBorder(nil, nil, nameCell("Block cache"), nil, container.NewHBox(shell.NewValueBadge("Off")))}
 	}
 	u := s.Usage
 	return []fyne.CanvasObject{
-		widget.NewLabel("Block cache"),
-		progressRow(s.CacheFraction(), usedOfLimitText(u.BlockCache.UsedBytes, u.BlockCache.LimitBytes)),
+		meterRow("Block cache", s.CacheFraction(), usedOfLimitText(u.BlockCache.UsedBytes, u.BlockCache.LimitBytes)),
 		pairRow("Hit ratio (1 h)", percentText(u.BlockCache.HitRatio1h)),
 	}
 }

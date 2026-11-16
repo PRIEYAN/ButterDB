@@ -10,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings/vm"
 )
 
@@ -39,17 +40,19 @@ func newPreferencesPanel(w *view) *preferencesPanel {
 	p.clipboard.OnSubmitted = func(string) { p.onClipboard() }
 	apply := widget.NewButtonWithIcon("Apply", theme.ConfirmIcon(), p.onClipboard)
 	form := container.NewVBox(
-		heading("App preferences"),
 		widget.NewLabel("Theme"),
-		p.theme,
+		container.NewHBox(shell.FramedInput(p.theme)),
+		shell.NewSectionGap(),
 		widget.NewLabel("Download folder"),
-		container.NewBorder(nil, nil, nil, container.NewHBox(browse, save), p.downloadDir),
+		container.NewBorder(nil, nil, nil, shell.Actions(browse, save), p.downloadDir),
+		shell.NewSectionGap(),
 		widget.NewLabel("Upload concurrency (1 to 4)"),
-		p.concurrency,
+		container.NewHBox(shell.FramedInput(p.concurrency)),
+		shell.NewSectionGap(),
 		widget.NewLabel("Clear the clipboard after this many seconds (0 never clears)"),
-		container.NewBorder(nil, nil, nil, apply, p.clipboard),
+		container.NewBorder(nil, nil, nil, shell.Action(apply), p.clipboard),
 	)
-	p.root = scrolled(form)
+	p.root = scrolledCard(stepPreferences, "App preferences", form)
 	return p
 }
 
