@@ -88,8 +88,8 @@ func tokenDefaults() Config {
 		},
 		Cache: CacheConfig{
 			Dir:               dataDirToken + "/cache",
-			BlocksMaxBytes:    20 << 30,
-			WarmOnPutMaxBytes: 64 << 20,
+			BlocksMaxBytes:    0,
+			WarmOnPutMaxBytes: 0,
 			MinFreeBytes:      2 << 30,
 		},
 		Spool: SpoolConfig{

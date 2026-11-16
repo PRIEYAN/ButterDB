@@ -176,3 +176,35 @@ func TestHostExecutable(t *testing.T) {
 		t.Fatal("unresolvable name accepted")
 	}
 }
+
+func TestHostChecksSkipCacheDirWhenCacheIsOff(t *testing.T) {
+	cases := []struct {
+		name      string
+		blocksMax config.ByteSize
+		media     bool
+		wantInUse bool
+	}{
+		{name: "default cache off", blocksMax: 0, wantInUse: false},
+		{name: "block cache enabled", blocksMax: 1 << 30, wantInUse: true},
+		{name: "media derivative cache", blocksMax: 0, media: true, wantInUse: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.DataDir = t.TempDir()
+			cfg.Cache.Dir = filepath.Join(cfg.DataDir, "cache")
+			cfg.Cache.BlocksMaxBytes = tc.blocksMax
+			cfg.Media.Enabled = tc.media
+			h := checkerWith(fakeFiles{}, fakeVolumes{fsType: magicNFS, fsKnown: true, writable: true})
+			found := h.run(cfg)
+			if got := findingContaining(found, "cache.dir", config.SeverityError, "NFS"); got != tc.wantInUse {
+				t.Fatalf("cache.dir NFS finding = %v, want %v (findings %+v)", got, tc.wantInUse, found)
+			}
+			for _, f := range found {
+				if f.Key == "cache.dir" && !tc.wantInUse {
+					t.Fatalf("cache.dir finding with the cache off: %+v", f)
+				}
+			}
+		})
+	}
+}

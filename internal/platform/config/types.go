@@ -135,7 +135,7 @@ type SendRateConfig struct {
 
 type CacheConfig struct {
 	Dir               string   `toml:"dir" kind:"path"`
-	BlocksMaxBytes    ByteSize `toml:"blocks_max_bytes"`
+	BlocksMaxBytes    ByteSize `toml:"blocks_max_bytes" min:"0"`
 	WarmOnPutMaxBytes ByteSize `toml:"warm_on_put_max_bytes" min:"0"`
 	MinFreeBytes      ByteSize `toml:"min_free_bytes" min:"0"`
 }

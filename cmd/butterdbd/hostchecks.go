@@ -46,7 +46,9 @@ func (h hostChecker) run(cfg config.Config) []config.Finding {
 	var found []config.Finding
 	found = append(found, h.dataDir(cfg.DataDir)...)
 	found = append(found, h.localFilesystem("data_dir", cfg.DataDir)...)
-	found = append(found, h.localFilesystem("cache.dir", cfg.Cache.Dir)...)
+	if cacheDirInUse(cfg) {
+		found = append(found, h.localFilesystem("cache.dir", cfg.Cache.Dir)...)
+	}
 	found = append(found, h.sameFilesystem(cfg)...)
 	found = append(found, h.freeSpace(cfg)...)
 	found = append(found, h.serverKey(cfg)...)
@@ -54,6 +56,10 @@ func (h hostChecker) run(cfg config.Config) []config.Finding {
 	found = append(found, h.tlsPairs(cfg)...)
 	found = append(found, h.mediaFiles(cfg.Media)...)
 	return found
+}
+
+func cacheDirInUse(cfg config.Config) bool {
+	return cfg.Cache.BlocksMaxBytes > 0 || cfg.Media.Enabled
 }
 
 func (h hostChecker) dataDir(path string) []config.Finding {
