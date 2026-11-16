@@ -60,11 +60,11 @@ func (b *browser) openPresignDialog() {
 func (d *presignDialog) show() {
 	d.signing = widget.NewSelect(nil, nil)
 	d.signing.PlaceHolder = loadingKeysText
-	d.expiry = widget.NewSelect(d.expiryLabels(), d.onExpiryChanged)
-	d.expiry.SetSelected(d.options[1].Label)
 	d.custom = widget.NewEntry()
 	d.custom.SetPlaceHolder("Seconds (1 to " + strconv.Itoa(vm.MaxPresignSeconds) + ")")
 	d.custom.Hide()
+	d.expiry = widget.NewSelect(d.expiryLabels(), d.onExpiryChanged)
+	d.expiry.SetSelected(d.options[1].Label)
 	d.problem = widget.NewLabel("")
 	d.problem.Wrapping = fyne.TextWrapWord
 	d.result = widget.NewLabel("")

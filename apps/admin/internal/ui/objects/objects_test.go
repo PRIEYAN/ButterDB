@@ -309,6 +309,22 @@ func buttonText(o fyne.CanvasObject) string {
 	return embedded.FieldByName("Text").String()
 }
 
+func TestPresignDialogOpensForSelectedObject(t *testing.T) {
+	client := newFakeClient()
+	client.pages[""] = adminv1.ObjectList{Objects: []adminv1.ObjectSummary{{Key: "a.txt"}}}
+	h := newHarness(t, client)
+	h.vmodel.Open(context.Background(), "photos", "")
+	h.vmodel.ToggleObject("a.txt")
+	h.browser.openPresignDialog()
+	overlay := h.win.Canvas().Overlays().Top()
+	if overlay == nil {
+		t.Fatal("presign dialog did not open")
+	}
+	if findButton(overlay, "Generate") == nil {
+		t.Fatal("presign dialog has no Generate button")
+	}
+}
+
 func TestSelectAllShortcutSelectsLoadedRows(t *testing.T) {
 	client := newFakeClient()
 	client.pages[""] = adminv1.ObjectList{Objects: []adminv1.ObjectSummary{{Key: "a"}, {Key: "b"}}, CommonPrefixes: []string{"d/"}}
