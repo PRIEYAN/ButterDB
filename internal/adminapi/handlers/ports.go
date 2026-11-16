@@ -92,10 +92,11 @@ type DeviceService interface {
 type DeviceResolver func(ctx context.Context) (adminrepo.Device, bool)
 
 type Config struct {
-	S3Endpoint     string
-	S3Region       string
-	AllowedHosts   []string
-	TrustedProxies []string
+	S3Endpoint         string
+	S3Region           string
+	AllowedHosts       []string
+	TrustedProxies     []string
+	UploadCommitBudget time.Duration
 }
 
 type Dependencies struct {

@@ -62,6 +62,18 @@ func (e *BadRequestError) Error() string {
 	return "handlers: bad request: " + e.Field
 }
 
+type DigestMismatchError struct {
+	Algorithm string
+}
+
+func (e *DigestMismatchError) Error() string {
+	return "handlers: " + e.Algorithm + " digest mismatch"
+}
+
+func (e *DigestMismatchError) Is(target error) bool {
+	return target == errs.ErrBadDigest
+}
+
 const (
 	defaultFloodWaitRetry      = 5 * time.Second
 	uncertainOutcomeRetry      = 30 * time.Second
@@ -212,6 +224,10 @@ func mapTyped(err error) (adminv1.APIError, bool) {
 	if errors.As(err, &limited) {
 		e := apiError(adminv1.CodeRateLimited, map[string]any{"scope": limited.Scope})
 		return withRetryAfter(e, limited.RetryAfter), true
+	}
+	var digest *DigestMismatchError
+	if errors.As(err, &digest) {
+		return apiError(adminv1.CodeChecksumMismatch, map[string]any{"algorithm": digest.Algorithm}), true
 	}
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {

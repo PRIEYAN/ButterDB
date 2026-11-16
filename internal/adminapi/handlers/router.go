@@ -138,6 +138,9 @@ func (a *api) jsonDeadlines(budget time.Duration, next http.Handler) http.Handle
 func (a *api) registerRoutes() {
 	a.registerSetupRoutes()
 	a.registerTelegramRoutes()
+	a.registerBucketRoutes()
+	a.registerKeyRoutes()
+	a.registerObjectRoutes()
 	a.registerReplicaRoutes()
 }
 
