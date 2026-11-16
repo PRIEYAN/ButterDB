@@ -5,6 +5,8 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 )
 
 type toolbarActions struct {
@@ -34,7 +36,7 @@ func newToolbar(a toolbarActions) toolbar {
 	create := widget.NewButtonWithIcon("New key", theme.ContentAddIcon(), a.create)
 	create.Importance = widget.HighImportance
 	refresh := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), a.refresh)
-	t.object = container.NewHBox(create, t.edit, t.revoke, t.copyID, refresh, t.revoked)
+	t.object = container.NewHBox(shell.Actions(create, t.edit, t.revoke, t.copyID, refresh), t.revoked)
 	t.setSelection(false, false)
 	return t
 }

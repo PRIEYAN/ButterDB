@@ -73,8 +73,17 @@ func newBucketForm(initial vm.NewBucket, creating bool, clip model.Clipboard) *b
 func newNote() *widget.Label {
 	l := widget.NewLabel("")
 	l.Wrapping = fyne.TextWrapWord
-	l.Importance = widget.WarningImportance
+	l.Hide()
 	return l
+}
+
+func setNote(l *widget.Label, text string) {
+	l.SetText(text)
+	if text == "" {
+		l.Hide()
+		return
+	}
+	l.Show()
 }
 
 func newErrorLabel() *widget.Label {
@@ -110,34 +119,28 @@ func (f *bucketForm) fill(initial vm.NewBucket) {
 func (f *bucketForm) layout() fyne.CanvasObject {
 	rows := []fyne.CanvasObject{}
 	if f.creating {
-		rows = append(rows, widget.NewLabel("Name"), f.name, f.nameError)
+		rows = append(rows, shell.NewFieldLabel("Name"), f.name, f.nameError)
 	}
 	rows = append(rows,
-		widget.NewLabel("Access"), f.access, f.accessNote,
-		widget.NewLabel("Encryption default"), f.encryption, f.encNote,
-		widget.NewLabel("Cache max-age in seconds"), container.NewBorder(nil, nil, nil, f.preset, f.cache), f.cacheError,
+		shell.NewFieldLabel("Access"), f.access, shell.NewCallout(shell.CalloutWarning, f.accessNote),
+		shell.NewFieldLabel("Encryption default"), f.encryption, shell.NewCallout(shell.CalloutWarning, f.encNote),
+		shell.NewFieldLabel("Cache max-age in seconds"), container.NewBorder(nil, nil, nil, shell.FramedInput(f.preset), f.cache), f.cacheError,
 	)
 	if !f.creating {
-		rows = append(rows, newWrappedNote(encryptionNewOnly))
+		rows = append(rows, shell.NewCalloutText(shell.CalloutInfo, encryptionNewOnly))
 	}
 	rows = append(rows, f.formError, f.progress)
 	return container.NewVBox(rows...)
 }
 
-func newWrappedNote(text string) *widget.Label {
-	l := widget.NewLabel(text)
-	l.Wrapping = fyne.TextWrapWord
-	return l
-}
-
 func (f *bucketForm) updateNotes() {
-	f.accessNote.SetText("")
+	setNote(f.accessNote, "")
 	if f.access.Selected == accessPublicRead {
-		f.accessNote.SetText(publicReadNotice)
+		setNote(f.accessNote, publicReadNotice)
 	}
-	f.encNote.SetText("")
+	setNote(f.encNote, "")
 	if f.encryption.Selected == encryptionOn {
-		f.encNote.SetText(encryptionNotice)
+		setNote(f.encNote, encryptionNotice)
 	}
 }
 

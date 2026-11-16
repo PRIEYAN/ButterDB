@@ -14,7 +14,12 @@ import (
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/buckets/vm"
 )
 
-const screenTitle = "Buckets"
+const (
+	screenTitle = "Buckets"
+	pageKicker  = "admin / buckets"
+	listLabel   = "buckets/list"
+	gridGap     = 8
+)
 
 type Env struct {
 	Window    func() fyne.Window
@@ -94,9 +99,10 @@ func (s *Screen) build() {
 		remove:   s.confirmDelete,
 		refresh:  s.retry,
 	})
-	top := container.NewVBox(s.toolbar.object, s.strip.object, s.progress)
-	body := container.NewStack(s.list.table, container.NewCenter(s.empty))
-	s.root = container.NewBorder(top, nil, nil, nil, body)
+	header := shell.NewPageHeader(pageKicker, shell.NewHeading(screenTitle))
+	top := container.NewVBox(header, s.toolbar.object, shell.NewSectionGap(), s.strip.object, s.progress)
+	body := shell.NewFlushWindowCard(listLabel, container.NewStack(s.list.table, container.NewCenter(s.empty)))
+	s.root = container.NewBorder(top, nil, nil, nil, shell.Inset(0, gridGap, gridGap, 0, body))
 }
 
 func (s *Screen) retry() {

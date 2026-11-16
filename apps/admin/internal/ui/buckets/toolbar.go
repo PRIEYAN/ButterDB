@@ -2,9 +2,10 @@ package buckets
 
 import (
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 )
 
 type toolbarActions struct {
@@ -31,7 +32,7 @@ func newToolbar(a toolbarActions) toolbar {
 	create := widget.NewButtonWithIcon("New bucket", theme.ContentAddIcon(), a.create)
 	create.Importance = widget.HighImportance
 	refresh := widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), a.refresh)
-	t.object = container.NewHBox(create, t.settings, t.browse, t.remove, refresh)
+	t.object = shell.Actions(create, t.settings, t.browse, t.remove, refresh)
 	t.setSelection(false)
 	return t
 }

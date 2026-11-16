@@ -14,7 +14,12 @@ import (
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/keys/vm"
 )
 
-const screenTitle = "Access keys"
+const (
+	screenTitle = "Access keys"
+	pageKicker  = "admin / keys"
+	listLabel   = "keys/list"
+	gridGap     = 8
+)
 
 type Env struct {
 	Window    func() fyne.Window
@@ -101,9 +106,10 @@ func (s *Screen) build() {
 		refresh:     s.retry,
 		showRevoked: s.setShowRevoked,
 	})
-	top := container.NewVBox(s.toolbar.object, s.strip.object, s.progress)
-	body := container.NewStack(s.list.table, container.NewCenter(s.empty))
-	s.root = container.NewBorder(top, nil, nil, nil, body)
+	header := shell.NewPageHeader(pageKicker, shell.NewHeading(screenTitle))
+	top := container.NewVBox(header, s.toolbar.object, shell.NewSectionGap(), s.strip.object, s.progress)
+	body := shell.NewFlushWindowCard(listLabel, container.NewStack(s.list.table, container.NewCenter(s.empty)))
+	s.root = container.NewBorder(top, nil, nil, nil, shell.Inset(0, gridGap, gridGap, 0, body))
 }
 
 func (s *Screen) retry() {

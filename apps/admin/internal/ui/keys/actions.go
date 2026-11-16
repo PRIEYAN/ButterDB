@@ -5,7 +5,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -49,7 +48,7 @@ func (s *Screen) showSecretOnce(secret *vm.Secret) {
 		return
 	}
 	s.secret = secret
-	s.secretView = newSecretDialog(*secret, s.clip, win.Canvas(), s.vm.Done)
+	s.secretView = newSecretDialog(*secret, s.clip, win, s.vm.Done)
 	s.secretView.show(win.Canvas())
 }
 
@@ -60,7 +59,7 @@ func (s *Screen) openCreate() {
 	}
 	ctx := s.ctx
 	form := newKeyForm("", vm.KeyScope{Actions: vm.PresetReadOnly()}, s.vm.State().Get().BucketNames, s.clip)
-	s.runFormDialog(win, "New access key", "Create key", theme.ContentAddIcon(), form, func(ctx context.Context) bool {
+	s.runFormDialog(win, "keys/new", "New access key", "Create key", theme.ContentAddIcon(), form, func(ctx context.Context) bool {
 		return s.vm.Create(ctx, form.newKey())
 	})
 	s.spawn(func() {
@@ -77,7 +76,7 @@ func (s *Screen) openEdit() {
 	}
 	ctx := s.ctx
 	form := newKeyForm(key.Name, vm.ScopeOf(key.Scope), s.vm.State().Get().BucketNames, s.clip)
-	s.runFormDialog(win, "Edit "+key.Name, "Save changes", theme.ConfirmIcon(), form, func(ctx context.Context) bool {
+	s.runFormDialog(win, "keys/"+key.AccessKeyID+"/edit", "Edit "+key.Name, "Save changes", theme.ConfirmIcon(), form, func(ctx context.Context) bool {
 		return s.vm.Update(ctx, key.AccessKeyID, form.keyEdit())
 	})
 	s.spawn(func() {
@@ -86,13 +85,13 @@ func (s *Screen) openEdit() {
 	})
 }
 
-func (s *Screen) runFormDialog(win fyne.Window, title, submitLabel string, icon fyne.Resource, form *keyForm, submit func(context.Context) bool) {
-	var dlg *dialog.CustomDialog
+func (s *Screen) runFormDialog(win fyne.Window, label, title, submitLabel string, icon fyne.Resource, form *keyForm, submit func(context.Context) bool) {
+	var dlg *shell.Dialog
 	cancel := widget.NewButtonWithIcon("Cancel", theme.CancelIcon(), func() { dlg.Hide() })
 	confirm := widget.NewButtonWithIcon(submitLabel, icon, nil)
 	confirm.Importance = widget.HighImportance
-	dlg = dialog.NewCustomWithoutButtons(title, container.NewVBox(form.root), win)
-	dlg.SetButtons([]fyne.CanvasObject{cancel, confirm})
+	dlg = shell.NewDialog(win, label, title, container.NewVBox(form.root))
+	dlg.SetButtons(cancel, confirm)
 	dlg.SetOnClosed(func() {
 		if s.form == form {
 			s.form = nil
