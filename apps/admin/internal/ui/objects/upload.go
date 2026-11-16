@@ -70,7 +70,7 @@ func (b *browser) showUploadOptions(bucket string, spec vm.UploadSpec) {
 	form := widget.NewForm(
 		widget.NewFormItem("Key", key),
 		widget.NewFormItem("Content type", contentType),
-		widget.NewFormItem("Encryption", encryption),
+		widget.NewFormItem("Encryption", shell.FramedInput(encryption)),
 		widget.NewFormItem("Metadata", metadata),
 	)
 	var dlg *shell.Dialog
