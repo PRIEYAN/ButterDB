@@ -394,7 +394,7 @@ admin listener.
 | `admin.sock` | Control socket used by `butterdbd admin-token` |
 | `spool/` | PUT bodies and sealed ciphertext while a job runs |
 | `multipart/<upload id>/` | Staged S3 multipart parts |
-| `cache/blocks/` | Origin block cache of stored bytes |
+| `cache/blocks/` | Origin block cache of stored bytes; exists only when enabled (D21) |
 | `cache/derived/` | Transform output cache (13) |
 | `transformd.sock` | Unix socket to the transform worker, mode `0600` (13) |
 
@@ -619,8 +619,9 @@ Request: `PUT /photos/2026/cat.jpg` on bucket `photos` with
     `ETag: "<md5 hex>"` and `x-amz-server-side-encryption: AES256` (D8).
 16. After the response, `ingest/remove` deletes the superseded messages in
     batches of 100; failed batches stay queued for `ingest/sweeper`. The spool
-    files are removed. Default (owner may change): when the stored size is at
-    most 64 MiB, the sealed bytes are first copied into `cache/blocks/`.
+    files are removed. Only when `cache.warm_on_put_max_bytes` is above 0 (off
+    by default, D21) and the stored size is at most that value, the sealed
+    bytes are first copied into `cache/blocks/`.
 17. From phase 12, a `replica_journal` row is appended for the commit (A9).
 
 | Failure point | State in Telegram | Response | Recovery |
@@ -1109,7 +1110,7 @@ register adds the engineering risks and where each is closed.
 | Configuration and key file paths | `/etc/butterdb/butterdb.toml`, `/etc/butterdb/server.key` |
 | Drain and close budgets | 10 s listener drain, 5 s per component |
 | S3 commit budget (longest a PUT waits on admission and Telegram before `503 SlowDown`) | 2 minutes; [operations.md](spec/operations.md) names the key |
-| Small-object cache warm on PUT | Stored size at most 64 MiB |
+| Small-object cache warm on PUT | Off by default (D21); when enabled, stored size at most `cache.warm_on_put_max_bytes` |
 | Multipart idle expiry | 7 days |
 | `CopyObject` | Streamed through the read path into a new put |
 | Block cache index | File names published by rename; no database rows |

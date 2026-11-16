@@ -199,7 +199,7 @@ The S3 listener follows the server states of [operations.md](operations.md)
 | --- | --- | --- |
 | `starting`, `unlinked`, `syncing` | `503 ServiceUnavailable`, `Retry-After: 30` | `503 ServiceUnavailable`, `Retry-After: 30` |
 | `ready` | Served | Served |
-| `degraded` (Telegram disconnected, or in a flood wait longer than `s3.request_budget`) | Served from the projection and the block cache; a block-cache miss is `503 SlowDown` with `Retry-After` | `503 SlowDown` with `Retry-After` |
+| `degraded` (Telegram disconnected, or in a flood wait longer than `s3.request_budget`) | Served from the projection, and from the block cache only when it is enabled (D21); a read that needs Telegram is `503 SlowDown` with `Retry-After` | `503 SlowDown` with `Retry-After` |
 
 Independently of the server state, a bucket without write authority (scan in
 progress or rebuild pending, [storage-model.md](storage-model.md)) refuses
