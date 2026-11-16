@@ -13,7 +13,10 @@ import (
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
 )
 
-const readableWidthEms = 28
+const (
+	readableWidthEms = 28
+	fieldNameEms     = 12
+)
 
 type readableWidthLayout struct{}
 
@@ -40,22 +43,32 @@ func newWrappedLabel(text string) *widget.Label {
 }
 
 func NewCopyField(label string, value string, clip model.Clipboard) fyne.CanvasObject {
-	name := widget.NewLabelWithStyle(label, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	text := widget.NewLabel(value)
+	name := container.NewStack(FixedSpace(theme.TextSize()*fieldNameEms, 0), NewFieldLabel(label))
+	return container.NewBorder(nil, nil, name, copyAction(value, clip), copyValue(value))
+}
+
+func NewStackedCopyField(label string, value string, clip model.Clipboard) fyne.CanvasObject {
+	return container.NewVBox(NewFieldLabel(label), container.NewBorder(nil, nil, nil, copyAction(value, clip), copyValue(value)))
+}
+
+func copyValue(value string) fyne.CanvasObject {
+	text := NewMono(value)
 	text.Selectable = true
 	text.Wrapping = fyne.TextWrapBreak
+	return text
+}
+
+func copyAction(value string, clip model.Clipboard) fyne.CanvasObject {
 	copyButton := widget.NewButtonWithIcon("Copy", theme.ContentCopyIcon(), nil)
 	copyButton.OnTapped = func() {
 		clip.SetText(value)
 		copyButton.SetText("Copied")
 	}
-	return container.NewBorder(nil, nil, name, copyButton, text)
+	return container.NewVBox(Action(copyButton))
 }
 
 func NewProblemView(p model.Problem, clip model.Clipboard) fyne.CanvasObject {
-	rows := []fyne.CanvasObject{
-		widget.NewLabelWithStyle(p.Title, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-	}
+	rows := []fyne.CanvasObject{NewFieldLabel(p.Title)}
 	rows[0].(*widget.Label).Wrapping = fyne.TextWrapWord
 	if p.Body != "" {
 		rows = append(rows, newWrappedLabel(p.Body))
@@ -70,13 +83,13 @@ func NewProblemView(p model.Problem, clip model.Clipboard) fyne.CanvasObject {
 }
 
 func newDetailsExpander(text string, clip model.Clipboard) fyne.CanvasObject {
-	body := widget.NewLabel(text)
+	body := NewMono(text)
 	body.Selectable = true
 	body.Wrapping = fyne.TextWrapBreak
 	copyButton := widget.NewButtonWithIcon("Copy details", theme.ContentCopyIcon(), func() {
 		clip.SetText(text)
 	})
-	return widget.NewAccordion(widget.NewAccordionItem("Details", container.NewVBox(body, copyButton)))
+	return newExpander("Details", container.NewVBox(body, container.NewHBox(Action(copyButton))))
 }
 
 func detailsText(p model.Problem) string {
