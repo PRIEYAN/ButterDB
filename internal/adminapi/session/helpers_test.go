@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -97,4 +98,8 @@ var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
 func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func dialUnix(path string) (net.Conn, error) {
+	return net.Dial("unix", path)
 }
