@@ -75,7 +75,7 @@ func newDetailsPanel(clip model.Clipboard) *detailsPanel {
 	d.image.Hide()
 	d.caption = widget.NewLabel("")
 	d.caption.Wrapping = fyne.TextWrapWord
-	d.frame = newFocusFrame(container.NewVBox(d.image, d.caption))
+	d.frame = newFocusFrame(container.NewVBox(shell.NewCodeBlock(d.image), d.caption))
 	d.root = container.NewVScroll(container.NewVBox(d.status, d.frame, d.fields))
 	return d
 }
@@ -96,7 +96,7 @@ func (d *detailsPanel) render(st vm.State) {
 	case st.Details.Meta != nil:
 		d.status.SetText("")
 		for _, field := range metaFields(*st.Details.Meta) {
-			d.fields.Add(shell.NewCopyField(field.label, field.value, d.clip))
+			d.fields.Add(shell.NewStackedCopyField(field.label, field.value, d.clip))
 		}
 	}
 	d.fields.Refresh()

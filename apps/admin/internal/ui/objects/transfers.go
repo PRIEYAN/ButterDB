@@ -14,15 +14,18 @@ import (
 )
 
 const (
-	statusWaiting    = "Waiting"
-	statusSaving     = "Saving to Telegram…"
-	statusUploaded   = "Uploaded"
-	statusDownloaded = "Downloaded"
-	statusCancelled  = "Cancelled"
-	statusSkipped    = "Skipped"
-	statusFailed     = "Failed"
-	finishingLabel   = "Finishing…"
-	transferListRows = 4
+	statusWaiting      = "Waiting"
+	statusSaving       = "Saving to Telegram…"
+	statusUploaded     = "Uploaded"
+	statusDownloaded   = "Downloaded"
+	statusCancelled    = "Cancelled"
+	statusSkipped      = "Skipped"
+	statusFailed       = "Failed"
+	finishingLabel     = "Finishing…"
+	transferListRows   = 4
+	transfersLabel     = "objects/transfers"
+	transfersMinHeight = 96
+	gridGap            = 8
 )
 
 type transferPanel struct {
@@ -36,14 +39,16 @@ type transferPanel struct {
 
 func newTransferPanel(owner *browser) *transferPanel {
 	p := &transferPanel{owner: owner}
-	p.title = widget.NewLabelWithStyle("Transfers", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	p.title = shell.NewFieldLabel("Transfers")
 	p.pause = widget.NewLabel("")
 	p.pause.Hide()
 	clear := widget.NewButtonWithIcon("Clear finished", theme.DeleteIcon(), func() { owner.vmodel.ClearFinished() })
 	p.rows = container.NewVBox()
 	scroll := container.NewVScroll(p.rows)
-	scroll.SetMinSize(fyne.NewSize(0, 120))
-	p.root = container.NewBorder(container.NewVBox(widget.NewSeparator(), container.NewBorder(nil, nil, p.title, clear), p.pause), nil, nil, nil, scroll)
+	scroll.SetMinSize(fyne.NewSize(0, transfersMinHeight))
+	header := container.NewVBox(container.NewBorder(nil, nil, p.title, shell.Action(clear)), shell.NewCallout(shell.CalloutWarning, p.pause))
+	card := shell.NewFlushWindowCard(transfersLabel, shell.Inset(gridGap, gridGap, gridGap, gridGap, container.NewBorder(header, nil, nil, nil, scroll)))
+	p.root = container.NewVBox(shell.Inset(0, gridGap, gridGap, 0, card))
 	p.root.Hide()
 	return p
 }
@@ -91,7 +96,7 @@ func (p *transferPanel) tickPause() {
 }
 
 func (p *transferPanel) rowFor(item vm.Transfer) fyne.CanvasObject {
-	name := widget.NewLabel(item.Key)
+	name := shell.NewMono(item.Key)
 	name.Truncation = fyne.TextTruncateEllipsis
 	kind := widget.NewIcon(theme.UploadIcon())
 	if item.Kind == vm.KindDownload {
@@ -99,9 +104,9 @@ func (p *transferPanel) rowFor(item vm.Transfer) fyne.CanvasObject {
 	}
 	status := widget.NewLabel(TransferStatusText(item))
 	status.Wrapping = fyne.TextWrapWord
-	buttons := p.buttonsFor(item)
-	left := container.NewBorder(nil, nil, kind, nil, name)
-	return container.NewBorder(nil, nil, left, buttons, container.NewVBox(progressFor(item), status))
+	buttons := container.NewVBox(p.buttonsFor(item))
+	header := container.NewBorder(nil, nil, kind, buttons, name)
+	return container.NewVBox(header, progressFor(item), status, widget.NewSeparator())
 }
 
 func progressFor(item vm.Transfer) fyne.CanvasObject {
@@ -110,34 +115,36 @@ func progressFor(item vm.Transfer) fyne.CanvasObject {
 		bar := widget.NewProgressBarInfinite()
 		return bar
 	case vm.TransferSending, vm.TransferDone:
-		bar := widget.NewProgressBar()
-		bar.TextFormatter = func() string { return "" }
-		if item.Total > 0 {
-			bar.Max = float64(item.Total)
-			bar.Value = float64(item.Sent)
-		} else if item.State == vm.TransferDone {
-			bar.Max, bar.Value = 1, 1
-		}
-		return bar
+		return shell.NewMeterBar(transferFraction(item))
 	}
 	return widget.NewLabel("")
+}
+
+func transferFraction(item vm.Transfer) float64 {
+	if item.Total > 0 {
+		return float64(item.Sent) / float64(item.Total)
+	}
+	if item.State == vm.TransferDone {
+		return 1
+	}
+	return 0
 }
 
 func (p *transferPanel) buttonsFor(item vm.Transfer) fyne.CanvasObject {
 	switch item.State {
 	case vm.TransferQueued, vm.TransferSending:
-		return widget.NewButtonWithIcon("Cancel", theme.CancelIcon(), func() { p.owner.vmodel.Cancel(item.ID) })
+		return shell.Action(widget.NewButtonWithIcon("Cancel", theme.CancelIcon(), func() { p.owner.vmodel.Cancel(item.ID) }))
 	case vm.TransferCommitting:
 		button := widget.NewButtonWithIcon(finishingLabel, theme.CancelIcon(), nil)
 		button.Disable()
-		return button
+		return shell.Action(button)
 	case vm.TransferFailed, vm.TransferCancelled:
-		return container.NewHBox(
+		return shell.Actions(
 			widget.NewButtonWithIcon("Retry", theme.ViewRefreshIcon(), func() { p.owner.retry(item) }),
 			widget.NewButtonWithIcon("Remove", theme.DeleteIcon(), func() { p.owner.vmodel.Remove(item.ID) }),
 		)
 	}
-	return widget.NewButtonWithIcon("Remove", theme.DeleteIcon(), func() { p.owner.vmodel.Remove(item.ID) })
+	return shell.Action(widget.NewButtonWithIcon("Remove", theme.DeleteIcon(), func() { p.owner.vmodel.Remove(item.ID) }))
 }
 
 func TransferStatusText(item vm.Transfer) string {

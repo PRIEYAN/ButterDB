@@ -5,7 +5,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
@@ -60,13 +59,13 @@ func (b *browser) showDeleteFailures(bucket string, result vm.DeleteResult) {
 	}
 	scroll := container.NewVScroll(rows)
 	scroll.SetMinSize(fyne.NewSize(480, 200))
-	var dlg *dialog.CustomDialog
+	var dlg *shell.Dialog
 	closeButton := widget.NewButton(dismissLabel, func() { dlg.Hide() })
 	retry := widget.NewButton("Retry failed", func() {
 		dlg.Hide()
 		go b.runDelete(bucket, result.FailedKeys())
 	})
-	dlg = newChoiceDialog(b.win, "Some objects were not deleted", scroll, closeButton, retry)
+	dlg = newChoiceDialog(b.win, "objects/delete-failures", "Some objects were not deleted", scroll, closeButton, retry)
 	dlg.Show()
 	b.win.Canvas().Focus(closeButton)
 }

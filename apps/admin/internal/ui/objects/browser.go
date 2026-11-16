@@ -27,6 +27,11 @@ const (
 	encryptedLabel    = "Encrypted"
 	filterPlaceholder = "Filter by prefix"
 	chooseBucketHint  = "Choose a bucket first."
+	noticeLabel       = "objects/notice"
+	pageKicker        = "admin / objects"
+	listLabelPrefix   = "objects/"
+	detailsLabel      = "objects/details"
+	filterWidth       = 260
 )
 
 type Options struct {
@@ -54,6 +59,7 @@ type browser struct {
 	details      *detailsPanel
 	transfers    *transferPanel
 	loadingBar   *widget.ProgressBarInfinite
+	listCard     *shell.WindowCard
 
 	uiMu        sync.Mutex
 	mu          sync.Mutex
@@ -99,7 +105,8 @@ func (b *browser) build() {
 	b.filter.OnSubmitted = func(text string) { go b.vmodel.ApplyFilter(b.commandContext(), strings.TrimSpace(text)) }
 	b.loadingBar = widget.NewProgressBarInfinite()
 	b.loadingBar.Hide()
-	topBar := container.NewBorder(nil, nil, container.NewHBox(b.bucketSelect, b.upButton), nil, container.NewBorder(nil, nil, nil, container.NewGridWrap(fyne.NewSize(260, 36), b.filter), container.NewHScroll(b.crumbs)))
+	filter := container.NewStack(shell.FixedSpace(filterWidth, 0), b.filter)
+	topBar := container.NewBorder(nil, nil, container.NewHBox(shell.FramedInput(b.bucketSelect), shell.Action(b.upButton)), nil, container.NewBorder(nil, nil, nil, filter, container.NewHScroll(b.crumbs)))
 
 	b.table = newBrowserTable(tableHandlers{
 		onUp:        func() { go b.vmodel.Up(b.commandContext()) },
@@ -127,14 +134,17 @@ func (b *browser) build() {
 	b.details = newDetailsPanel(b.clip)
 	b.transfers = newTransferPanel(b)
 	toolbar := b.buildToolbar()
-	main := container.NewBorder(container.NewVBox(topBar, toolbar, b.loadingBar), b.transfers.root, nil, nil, b.table)
-	split := container.NewHSplit(main, b.details.root)
-	split.SetOffset(0.68)
-	b.root = split
+	b.listCard = shell.NewFlushWindowCard(listLabelPrefix, b.table)
+	main := container.NewBorder(nil, b.transfers.root, nil, nil, shell.Inset(0, gridGap, gridGap, 0, b.listCard))
+	details := shell.Inset(0, gridGap, gridGap, gridGap, shell.NewWindowCard(detailsLabel, "Details", b.details.root))
+	split := container.NewHSplit(main, details)
+	split.SetOffset(0.66)
+	top := container.NewVBox(shell.NewKicker(pageKicker), topBar, shell.VerticalSpace(gridGap), toolbar, shell.VerticalSpace(gridGap), b.loadingBar)
+	b.root = container.NewBorder(top, nil, nil, nil, split)
 }
 
 func (b *browser) buildToolbar() fyne.CanvasObject {
-	return container.NewHBox(
+	return shell.Actions(
 		widget.NewButtonWithIcon("Upload files…", theme.UploadIcon(), b.chooseFileToUpload),
 		widget.NewButtonWithIcon("Download", theme.DownloadIcon(), b.startDownload),
 		widget.NewButtonWithIcon("Delete…", theme.DeleteIcon(), b.requestDelete),
@@ -219,6 +229,7 @@ func (b *browser) renderToolbarArea(st vm.State) {
 		b.filter.SetText(st.Filter)
 	}
 	b.renderCrumbs(st)
+	b.listCard.SetLabel(listLabelPrefix + st.Bucket + "/" + st.Prefix)
 }
 
 func (b *browser) isFocused(o fyne.Focusable) bool {
@@ -233,7 +244,7 @@ func (b *browser) renderCrumbs(st vm.State) {
 	}
 	for i, crumb := range st.Breadcrumbs {
 		if i > 0 {
-			b.crumbs.Add(widget.NewLabel(breadcrumbJoiner))
+			b.crumbs.Add(shell.NewMono(breadcrumbJoiner))
 		}
 		prefix := crumb.Prefix
 		button := widget.NewButton(crumb.Label, func() { go b.vmodel.Open(b.commandContext(), st.Bucket, prefix) })
@@ -272,7 +283,7 @@ func (b *browser) present(p model.Problem) {
 		b.opts.Notifier.Problem(p)
 		return
 	}
-	dlg := newInfoDialog("", shell.NewProblemView(p, b.clip), b.win)
+	dlg := newInfoDialog(noticeLabel, "", shell.NewProblemView(p, b.clip), b.win)
 	dlg.Show()
 	if p.Presentation == model.PresentRoute && p.Route != "" {
 		b.nav.Navigate(p.Route, nil)
@@ -284,7 +295,7 @@ func (b *browser) inform(text string) {
 		b.opts.Notifier.Info(text)
 		return
 	}
-	newInfoDialog("", widget.NewLabel(text), b.win).Show()
+	newInfoDialog(noticeLabel, "", widget.NewLabel(text), b.win).Show()
 }
 
 func (b *browser) bindShortcuts() {

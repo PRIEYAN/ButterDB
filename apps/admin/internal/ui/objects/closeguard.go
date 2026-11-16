@@ -14,14 +14,14 @@ func (b *browser) askQuitWithTransfers(active int) {
 	}
 	body := widget.NewLabel(text)
 	body.Wrapping = fyne.TextWrapWord
-	dlg := newChoiceDialog(b.win, closeGuardTitle, body)
+	dlg := newChoiceDialog(b.win, "objects/quit", closeGuardTitle, body)
 	keep := widget.NewButton(keepOpenLabel, func() { dlg.Hide() })
 	quit := widget.NewButton(quitAnywayLabel, func() {
 		dlg.Hide()
 		b.win.Close()
 	})
 	quit.Importance = widget.DangerImportance
-	dlg.SetButtons([]fyne.CanvasObject{keep, quit})
+	dlg.SetButtons(keep, quit)
 	dlg.Show()
 	b.win.Canvas().Focus(keep)
 }
