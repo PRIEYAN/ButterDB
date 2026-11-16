@@ -2,7 +2,6 @@ package keys
 
 import (
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -19,18 +18,18 @@ const (
 	copyEnvLabel   = "Copy as environment variables"
 	doneLabel      = "Done"
 	secretEms      = 36
+	secretLabel    = "keys/secret-shown-once"
 )
 
 type secretDialog struct {
-	popup *widget.PopUp
-	ack   *widget.Check
-	done  *widget.Button
-	env   *widget.Button
+	dialog *shell.Dialog
+	ack    *widget.Check
+	done   *widget.Button
+	env    *widget.Button
 }
 
-func newSecretDialog(secret vm.Secret, clip model.Clipboard, canvasOf fyne.Canvas, onDone func()) *secretDialog {
+func newSecretDialog(secret vm.Secret, clip model.Clipboard, win fyne.Window, onDone func()) *secretDialog {
 	d := &secretDialog{}
-	title := widget.NewLabelWithStyle(secretTitle, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	body := widget.NewLabel(secretBody)
 	body.Wrapping = fyne.TextWrapWord
 	fields := container.NewVBox(
@@ -45,9 +44,10 @@ func newSecretDialog(secret vm.Secret, clip model.Clipboard, canvasOf fyne.Canva
 	}
 	d.env = widget.NewButtonWithIcon(copyEnvLabel, theme.ContentCopyIcon(), func() { clip.SetText(secret.EnvBlock()) })
 	d.done = widget.NewButtonWithIcon(doneLabel, theme.ConfirmIcon(), func() {
-		d.popup.Hide()
+		d.dialog.Hide()
 		onDone()
 	})
+	d.done.Importance = widget.HighImportance
 	d.done.Disable()
 	d.ack = widget.NewCheck(acknowledgeBox, func(checked bool) {
 		if checked {
@@ -56,14 +56,14 @@ func newSecretDialog(secret vm.Secret, clip model.Clipboard, canvasOf fyne.Canva
 		}
 		d.done.Disable()
 	})
-	width := canvas.NewRectangle(theme.Color(theme.ColorNameBackground))
-	width.SetMinSize(fyne.NewSize(theme.TextSize()*secretEms, 0))
-	content := container.NewStack(width, container.NewPadded(container.NewVBox(title, body, fields, d.env, d.ack, d.done)))
-	d.popup = widget.NewModalPopUp(content, canvasOf)
+	width := shell.FixedSpace(theme.TextSize()*secretEms, 0)
+	content := container.NewVBox(width, body, shell.NewCodeBlock(fields), container.NewHBox(shell.Action(d.env)), d.ack)
+	d.dialog = shell.NewBandDialog(win, secretLabel, secretTitle, content)
+	d.dialog.SetButtons(d.done)
 	return d
 }
 
 func (d *secretDialog) show(c fyne.Canvas) {
-	d.popup.Show()
+	d.dialog.Show()
 	c.Focus(d.ack)
 }

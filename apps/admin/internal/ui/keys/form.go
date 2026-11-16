@@ -76,14 +76,14 @@ func (f *keyForm) fill(name string, scope vm.KeyScope, known []string) {
 }
 
 func (f *keyForm) layout() fyne.CanvasObject {
-	presets := container.NewHBox(
+	presets := shell.Actions(
 		widget.NewButton(presetReadOnly, func() { f.setActions(vm.PresetReadOnly()) }),
 		widget.NewButton(presetReadWrite, func() { f.setActions(vm.PresetReadWrite()) }),
 	)
 	return container.NewVBox(
-		widget.NewLabel("Name"), f.name, f.nameError,
-		widget.NewLabel("Buckets"), f.all, f.buckets,
-		widget.NewLabel("Permissions"), f.actions, presets,
+		shell.NewFieldLabel("Name"), f.name, f.nameError,
+		shell.NewFieldLabel("Buckets"), f.all, f.buckets,
+		shell.NewFieldLabel("Permissions"), f.actions, presets,
 		f.scopeError, f.formError, f.progress,
 	)
 }

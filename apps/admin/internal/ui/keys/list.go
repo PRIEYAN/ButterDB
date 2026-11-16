@@ -160,7 +160,7 @@ func (l *keyList) updateHeader(id widget.TableCellID, o fyne.CanvasObject) {
 
 func (l *keyList) updateCell(id widget.TableCellID, o fyne.CanvasObject) {
 	label := o.(*widget.Label)
-	label.TextStyle = fyne.TextStyle{Monospace: id.Col == colID}
+	label.TextStyle = fyne.TextStyle{Monospace: id.Col != colName && id.Col != colBuckets && id.Col != colPermissions}
 	if id.Row < 0 || id.Row >= len(l.keys) {
 		label.SetText("")
 		return

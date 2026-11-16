@@ -5,7 +5,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -56,7 +55,7 @@ func (s *Screen) showNotEmptyOnce(n *vm.NotEmpty) {
 }
 
 func (s *Screen) showNotEmpty(win fyne.Window, n vm.NotEmpty) {
-	var dlg *dialog.CustomDialog
+	var dlg *shell.Dialog
 	closeDialog := func() {
 		dlg.Hide()
 		s.vm.DismissNotEmpty()
@@ -67,8 +66,8 @@ func (s *Screen) showNotEmpty(win fyne.Window, n vm.NotEmpty) {
 	})
 	closeButton := widget.NewButtonWithIcon("Close", theme.CancelIcon(), closeDialog)
 	content := shell.NewProblemView(n.Problem, s.clipboard())
-	dlg = dialog.NewCustomWithoutButtons("Bucket not empty", content, win)
-	dlg.SetButtons([]fyne.CanvasObject{open, closeButton})
+	dlg = shell.NewDialog(win, "buckets/delete", "Bucket not empty", content)
+	dlg.SetButtons(open, closeButton)
 	dlg.SetOnClosed(s.vm.DismissNotEmpty)
 	dlg.Show()
 	win.Canvas().Focus(closeButton)
@@ -80,7 +79,7 @@ func (s *Screen) openCreate() {
 		return
 	}
 	form := newBucketForm(vm.NewBucket{CacheMaxAgeSeconds: vm.DefaultCacheMaxAgeSeconds}, true, s.clipboard())
-	s.runFormDialog(win, "New bucket", "Create bucket", theme.ContentAddIcon(), form, func(ctx context.Context) bool {
+	s.runFormDialog(win, "buckets/new", "New bucket", "Create bucket", theme.ContentAddIcon(), form, func(ctx context.Context) bool {
 		return s.vm.Create(ctx, form.newBucket())
 	})
 }
@@ -97,7 +96,7 @@ func (s *Screen) openSettings() {
 		Encrypted:          current.Encrypted,
 		CacheMaxAgeSeconds: current.CacheMaxAgeSeconds,
 	}, false, s.clipboard())
-	s.runFormDialog(win, "Settings for "+name, "Save settings", theme.ConfirmIcon(), form, func(ctx context.Context) bool {
+	s.runFormDialog(win, "buckets/"+name+"/settings", "Settings for "+name, "Save settings", theme.ConfirmIcon(), form, func(ctx context.Context) bool {
 		return s.vm.Update(ctx, name, form.settings())
 	})
 }
@@ -111,14 +110,14 @@ func (s *Screen) currentSettings(name string) vm.Settings {
 	return vm.Settings{CacheMaxAgeSeconds: vm.DefaultCacheMaxAgeSeconds}
 }
 
-func (s *Screen) runFormDialog(win fyne.Window, title, submitLabel string, icon fyne.Resource, form *bucketForm, submit func(context.Context) bool) {
-	var dlg *dialog.CustomDialog
+func (s *Screen) runFormDialog(win fyne.Window, label, title, submitLabel string, icon fyne.Resource, form *bucketForm, submit func(context.Context) bool) {
+	var dlg *shell.Dialog
 	cancel := widget.NewButtonWithIcon("Cancel", theme.CancelIcon(), func() { dlg.Hide() })
 	confirm := widget.NewButtonWithIcon(submitLabel, icon, nil)
 	confirm.Importance = widget.HighImportance
 	body := container.NewVBox(form.root)
-	dlg = dialog.NewCustomWithoutButtons(title, body, win)
-	dlg.SetButtons([]fyne.CanvasObject{cancel, confirm})
+	dlg = shell.NewDialog(win, label, title, body)
+	dlg.SetButtons(cancel, confirm)
 	confirm.OnTapped = func() {
 		ctx := s.ctx
 		form.setBusy(true)

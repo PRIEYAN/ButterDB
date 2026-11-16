@@ -21,8 +21,8 @@ type column struct {
 
 func columns() []column {
 	return []column{
-		{title: "Name", sort: vm.ColumnName, ems: 16},
-		{title: "Access", sort: vm.ColumnAccess, ems: 8},
+		{title: "Name", sort: vm.ColumnName, ems: 14},
+		{title: "Access", sort: vm.ColumnAccess, ems: 10},
 		{title: "Encryption", sort: vm.ColumnEncryption, ems: 8},
 		{title: "Cache max-age", sort: vm.ColumnCacheMaxAge, ems: 9},
 		{title: "Objects", sort: vm.ColumnObjects, ems: 7},
@@ -165,6 +165,7 @@ func (l *bucketList) updateCell(id widget.TableCellID, o fyne.CanvasObject) {
 		label.SetText("")
 		return
 	}
+	label.TextStyle = fyne.TextStyle{Monospace: true}
 	label.SetText(l.cellText(l.buckets[id.Row], id.Col))
 }
 

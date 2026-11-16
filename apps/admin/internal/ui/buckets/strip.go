@@ -23,7 +23,8 @@ func newProblemStrip(clip model.Clipboard, onRetry, onDismiss func()) *problemSt
 	p.retry = widget.NewButtonWithIcon("Retry", theme.ViewRefreshIcon(), onRetry)
 	p.dismiss = widget.NewButtonWithIcon("Dismiss", theme.CancelIcon(), onDismiss)
 	p.body = container.NewStack()
-	p.object = container.NewVBox(p.body, container.NewHBox(p.retry, p.dismiss))
+	strip := container.NewVBox(p.body, shell.Actions(p.retry, p.dismiss))
+	p.object = container.NewVBox(shell.NewCallout(shell.CalloutWarning, strip), shell.NewSectionGap())
 	p.object.Hide()
 	return p
 }
