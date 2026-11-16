@@ -414,9 +414,6 @@ func TestScreenContract(t *testing.T) {
 		bucket, prefix := v.Location()
 		return bucket == "photos" && prefix == "a/" && !v.State().Get().Loading
 	})
-	screen.browser.uiMu.Lock()
-	screen.browser.uiMu.Unlock()
-	time.Sleep(10 * time.Millisecond)
 	screen.Hide()
 	cancel()
 }
