@@ -82,10 +82,11 @@ func (d *presignDialog) show() {
 	warning.Wrapping = fyne.TextWrapWord
 	form := widget.NewForm(
 		widget.NewFormItem("Object", object),
-		widget.NewFormItem("Signing key", d.signing),
-		widget.NewFormItem("Expires in", container.NewVBox(d.expiry, d.custom)),
+		widget.NewFormItem("Signing key", shell.FramedInput(d.signing)),
+		widget.NewFormItem("Expires in", container.NewVBox(shell.FramedInput(d.expiry), d.custom)),
 	)
 	d.result.TextStyle = fyne.TextStyle{Monospace: true}
+	d.result.Hide()
 	d.expires.TextStyle = fyne.TextStyle{Monospace: true}
 	content := container.NewVBox(
 		form, d.problem,
@@ -186,6 +187,7 @@ func (d *presignDialog) render(out vm.PresignOutcome) {
 		return
 	}
 	d.result.SetText(out.URL.URL)
+	d.result.Show()
 	d.expires.SetText("Expires at " + out.URL.ExpiresAt.Local().Format(dateLayout))
 	d.copyURL.Show()
 }

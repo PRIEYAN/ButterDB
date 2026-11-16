@@ -104,7 +104,6 @@ func (r *actionFrameRenderer) Refresh() {
 func (r *actionFrameRenderer) applyTheme() {
 	f := r.frame
 	f.border.setColor(designColor(f.Theme(), f.borderOf, fyne.CurrentApp().Settings().ThemeVariant()))
-	f.border.show(f.control.Visible())
 }
 
 type hoverSurface struct {

@@ -67,9 +67,3 @@ func (o *outline) place(size fyne.Size) {
 	o.sides[3].Move(fyne.NewPos(size.Width-borderWidth, 0))
 	o.sides[3].Resize(clampSize(fyne.NewSize(borderWidth, size.Height)))
 }
-
-func (o *outline) show(visible bool) {
-	for _, side := range o.sides {
-		side.Hidden = !visible
-	}
-}
