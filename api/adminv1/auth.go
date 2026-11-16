@@ -75,3 +75,14 @@ type UpdateDeviceRequest struct {
 type UnlinkRequest struct {
 	Confirm string `json:"confirm"`
 }
+
+type DeviceInfo struct {
+	Name          string
+	Platform      string
+	ClientVersion string
+	RemoteAddr    string
+}
+
+type ClaimResult = DeviceCredentials
+
+type DeviceTokenResult = DeviceCredentials
