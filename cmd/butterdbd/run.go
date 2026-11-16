@@ -72,7 +72,9 @@ func (a *application) run(ctx context.Context, args []string) int {
 		return a.runSetup(ctx, rest)
 	case "tgprobe":
 		return a.runTGProbe(ctx, rest)
-	case "admin-token", "rebuild", "snapshot", "restore":
+	case "admin-token":
+		return a.runAdminToken(ctx, rest)
+	case "rebuild", "snapshot", "restore":
 		a.fail(fmt.Errorf("subcommand %q is not available in this build", name))
 		return exitFailure
 	default:
