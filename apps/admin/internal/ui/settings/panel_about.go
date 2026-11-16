@@ -4,6 +4,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings/vm"
 )
 
@@ -14,7 +15,7 @@ type aboutPanel struct {
 
 func newAboutPanel(*view) *aboutPanel {
 	p := &aboutPanel{body: container.NewVBox()}
-	p.root = scrolled(container.NewVBox(heading("About"), p.body))
+	p.root = scrolledCard(stepAbout, "About", p.body)
 	return p
 }
 
@@ -23,14 +24,15 @@ func (p *aboutPanel) object() fyne.CanvasObject { return p.root }
 func (p *aboutPanel) update(s vm.State) {
 	a := s.About
 	rows := []fyne.CanvasObject{
-		pairRow("App version", a.AppVersion),
-		pairRow("Go version", a.GoVersion),
-		pairRow("Fyne version", a.FyneVersion),
-		pairRow("Server version", orDash(a.ServerVersion)),
-		heading("Licences"),
+		monoPairRow("App version", a.AppVersion),
+		monoPairRow("Go version", a.GoVersion),
+		monoPairRow("Fyne version", a.FyneVersion),
+		monoPairRow("Server version", orDash(a.ServerVersion)),
+		shell.NewSectionGap(),
+		shell.NewSectionTitle("Licences"),
 	}
 	for _, l := range a.Licences {
-		rows = append(rows, pairRow(l.Name, l.Licence))
+		rows = append(rows, container.NewBorder(nil, nil, nameCell(l.Name), nil, container.NewHBox(shell.NewValueBadge(l.Licence))))
 	}
 	fill(p.body, rows)
 }

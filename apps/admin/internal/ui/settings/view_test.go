@@ -2,19 +2,20 @@ package settings
 
 import (
 	"context"
+	"image/color"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings/vm"
 )
 
@@ -234,11 +235,10 @@ func walk(o fyne.CanvasObject, fn func(fyne.CanvasObject)) {
 		for _, child := range c.Objects {
 			walk(child, fn)
 		}
-	case *container.Scroll:
-		walk(c.Content, fn)
-	case *container.Split:
-		walk(c.Leading, fn)
-		walk(c.Trailing, fn)
+	case fyne.Widget:
+		for _, child := range test.WidgetRenderer(c).Objects() {
+			walk(child, fn)
+		}
 	}
 }
 
@@ -253,6 +253,8 @@ func visibleTexts(o fyne.CanvasObject) string {
 			out = append(out, w.Text)
 		case *widget.Button:
 			out = append(out, w.Text)
+		case *shell.Badge:
+			out = append(out, w.Text())
 		}
 	})
 	return strings.Join(out, "\n")
@@ -453,11 +455,6 @@ func TestUnlinkRequiresTypedWordInDialog(t *testing.T) {
 
 func walkOverlay(o fyne.CanvasObject, fn func(fyne.CanvasObject)) {
 	walk(o, fn)
-	if r, ok := o.(fyne.Widget); ok {
-		for _, child := range test.WidgetRenderer(r).Objects() {
-			walkOverlay(child, fn)
-		}
-	}
 }
 
 type confirmButton interface {
@@ -615,33 +612,32 @@ func TestProblemsGoThroughNotifier(t *testing.T) {
 
 func TestThemeFor(t *testing.T) {
 	test.NewTempApp(t)
+	parchment := color.NRGBA{R: 0xF7, G: 0xF4, B: 0xEB, A: 0xff}
+	terminal := color.NRGBA{R: 0x11, G: 0x12, B: 0x14, A: 0xff}
 	tests := []struct {
-		mode string
-		same bool
+		mode        string
+		onLightOS   color.NRGBA
+		onDarkOS    color.NRGBA
+		description string
 	}{
-		{vm.ThemeSystem, true},
-		{vm.ThemeLight, false},
-		{vm.ThemeDark, false},
-		{"unknown", true},
+		{mode: vm.ThemeSystem, onLightOS: parchment, onDarkOS: terminal, description: "system follows the OS variant"},
+		{mode: vm.ThemeLight, onLightOS: parchment, onDarkOS: parchment, description: "light forces parchment"},
+		{mode: vm.ThemeDark, onLightOS: terminal, onDarkOS: terminal, description: "dark forces terminal"},
+		{mode: "unknown", onLightOS: parchment, onDarkOS: terminal, description: "unknown falls back to system"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
 			got := ThemeFor(tt.mode)
-			_, forced := got.(forcedVariantTheme)
-			if forced == tt.same {
-				t.Fatalf("forced = %v", forced)
+			if c := color.NRGBAModel.Convert(got.Color(theme.ColorNameBackground, theme.VariantLight)); c != tt.onLightOS {
+				t.Fatalf("%s: background on a light OS = %v, want %v", tt.description, c, tt.onLightOS)
+			}
+			if c := color.NRGBAModel.Convert(got.Color(theme.ColorNameBackground, theme.VariantDark)); c != tt.onDarkOS {
+				t.Fatalf("%s: background on a dark OS = %v, want %v", tt.description, c, tt.onDarkOS)
 			}
 		})
 	}
-	light := ThemeFor(vm.ThemeLight).Color(theme.ColorNameBackground, theme.VariantDark)
-	dark := ThemeFor(vm.ThemeDark).Color(theme.ColorNameBackground, theme.VariantLight)
-	lr, lg, lb, _ := light.RGBA()
-	dr, dg, db, _ := dark.RGBA()
-	if lr == dr && lg == dg && lb == db {
-		t.Fatalf("forced variants produce the same background")
-	}
 	if ThemeFor(vm.ThemeDark).Size(theme.SizeNamePadding) != theme.DefaultTheme().Size(theme.SizeNamePadding) {
-		t.Fatalf("sizes must pass through")
+		t.Fatalf("the base padding must stay on Fyne's grid")
 	}
 }
 
