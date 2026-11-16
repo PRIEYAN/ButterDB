@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
-	"errors"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/PRIEYAN/ButterDB/internal/core"
@@ -25,6 +27,7 @@ func (a *application) runServe(ctx context.Context, args []string) int {
 		LogOutput: a.stdout,
 		Clock:     a.clock,
 		FS:        a.fsys,
+		Build:     core.BuildInfo{Version: a.build.Version, Commit: a.build.Commit},
 	})
 	if err != nil {
 		a.fail(err)
@@ -40,7 +43,7 @@ func (a *application) runServe(ctx context.Context, args []string) int {
 		a.closeApp(app, cfg.Shutdown.TotalTimeout.Std())
 		return code
 	}
-	serving, err := a.startServing(ctx, app)
+	serving, err := app.StartServing(ctx)
 	if err != nil {
 		a.fail(err)
 		code := exitCodeFor(err)
@@ -48,28 +51,19 @@ func (a *application) runServe(ctx context.Context, args []string) int {
 		return code
 	}
 	app.Logger().Info("serve started", "component", "lifecycle", "data_dir", app.DataDir().Path())
+	stopReload := a.reloadCertificateOnHangup(ctx, app, serving)
 	<-ctx.Done()
+	stopReload()
 	return a.shutdown(app, serving, cfg.Shutdown.TotalTimeout.Std())
-}
-
-func (a *application) startServing(ctx context.Context, app *core.App) (*core.Serving, error) {
-	serving, err := app.StartServing(ctx)
-	if errors.Is(err, core.ErrNotLinked) {
-		app.Logger().Info("s3 listener not started: deployment is not linked", "component", "lifecycle")
-		return nil, nil
-	}
-	return serving, err
 }
 
 func (a *application) shutdown(app *core.App, serving *core.Serving, total time.Duration) int {
 	closeCtx, cancel := context.WithTimeout(context.Background(), total)
 	defer cancel()
 	code := exitOK
-	if serving != nil {
-		if err := serving.Close(closeCtx); err != nil {
-			a.fail(err)
-			code = exitFailure
-		}
+	if err := serving.Close(closeCtx); err != nil {
+		a.fail(err)
+		code = exitFailure
 	}
 	if err := app.Close(closeCtx); err != nil {
 		a.fail(err)
@@ -79,4 +73,31 @@ func (a *application) shutdown(app *core.App, serving *core.Serving, total time.
 		app.Logger().Info("serve stopped", "component", "lifecycle")
 	}
 	return code
+}
+
+func (a *application) reloadCertificateOnHangup(ctx context.Context, app *core.App, serving *core.Serving) func() {
+	hangup := make(chan os.Signal, 1)
+	signal.Notify(hangup, syscall.SIGHUP)
+	stopped := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		for {
+			select {
+			case <-hangup:
+				if err := serving.ReloadCertificate(); err != nil {
+					app.Logger().Error("admin certificate reload failed", "component", "admin", "error", err)
+				}
+			case <-stopped:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return func() {
+		signal.Stop(hangup)
+		close(stopped)
+		<-finished
+	}
 }

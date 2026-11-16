@@ -15,6 +15,7 @@ const (
 	ReasonFormatTooNew           StartupReason = "format_too_new"
 	ReasonProjectionMismatch     StartupReason = "projection_mismatch"
 	ReasonForeignRegistry        StartupReason = "registry_foreign"
+	ReasonKeyMissing             StartupReason = "server_key_missing"
 )
 
 var (

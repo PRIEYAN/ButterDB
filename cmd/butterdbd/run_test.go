@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +30,7 @@ func TestRunDispatch(t *testing.T) {
 		{"no arguments", nil, exitUsage, "", "usage:"},
 		{"help", []string{"help"}, exitOK, "subcommands:", ""},
 		{"unknown subcommand", []string{"frobnicate"}, exitUsage, "", `unknown subcommand "frobnicate"`},
-		{"admin-token not built", []string{"admin-token"}, exitFailure, "", "not available in this build"},
+		{"rebuild not built", []string{"rebuild"}, exitFailure, "", "not available in this build"},
 		{"bad flag", []string{"version", "--nope"}, exitUsage, "", "flag provided but not defined"},
 	}
 	for _, tc := range cases {
@@ -97,9 +98,28 @@ func TestExitCodeFor(t *testing.T) {
 	}
 }
 
+func freeLoopbackAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().String()
+}
+
+func serveEnviron(t *testing.T, dir string) []string {
+	t.Helper()
+	return []string{
+		"BUTTERDB_DATA_DIR=" + dir,
+		"BUTTERDB_SERVER_KEY_FILE=" + filepath.Join(dir, "server.key"),
+		"BUTTERDB_ADMIN_LISTEN=" + freeLoopbackAddress(t),
+	}
+}
+
 func TestServeSecondInstanceExitsThree(t *testing.T) {
 	dir := privateTempDir(t)
-	environ := []string{"BUTTERDB_DATA_DIR=" + dir}
+	environ := serveEnviron(t, dir)
 
 	first := newTestApp(environ)
 	ctx, stop := context.WithCancel(context.Background())
@@ -130,9 +150,9 @@ func TestServeSecondInstanceExitsThree(t *testing.T) {
 	}
 }
 
-func TestServeSkipsS3ListenerWhenNotLinked(t *testing.T) {
+func TestServeKeepsAdminListenerWhenNotLinked(t *testing.T) {
 	dir := privateTempDir(t)
-	ta := newTestApp([]string{"BUTTERDB_DATA_DIR=" + dir})
+	ta := newTestApp(serveEnviron(t, dir))
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 	done := runInBackground(ta.app, ctx, []string{"serve"})
@@ -144,8 +164,13 @@ func TestServeSkipsS3ListenerWhenNotLinked(t *testing.T) {
 	if !strings.Contains(ta.stdout.String(), "s3 listener not started: deployment is not linked") {
 		t.Fatalf("stdout %q does not say the s3 listener was skipped", ta.stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(dir, "control.db")); !os.IsNotExist(err) {
-		t.Fatalf("unlinked serve created control.db: %v", err)
+	for _, want := range []string{`"msg":"admin listener"`, `"tls_fingerprint":"SHA256:`, `"msg":"setup token"`, `"msg":"server key generated"`} {
+		if !strings.Contains(ta.stdout.String(), want) {
+			t.Fatalf("stdout %q lacks %s", ta.stdout.String(), want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "control.db")); err != nil {
+		t.Fatalf("unlinked serve did not create control.db: %v", err)
 	}
 }
 
