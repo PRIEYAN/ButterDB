@@ -685,7 +685,7 @@ while visible, and on `Ctrl+R`.
 | Server | State (`starting`, `unlinked`, `syncing`, `ready`, `degraded`) with icon and text; version and commit; uptime |
 | Telegram | Account name and `@username`; `Connected` / `Disconnected`; `Flood wait until <time>` when set; send-rate ceiling per minute |
 | Storage | Buckets, objects, stored bytes, plaintext bytes, encrypted objects |
-| Cache and spool | Block cache used of limit as a progress bar with text, 1 h hit ratio as a percentage; spool used of limit, jobs in flight |
+| Cache and spool | Block cache used of limit as a progress bar with text, or the text "Off" with no bar and no hit ratio when the limit is 0 (D21), 1 h hit ratio as a percentage; spool used of limit, jobs in flight |
 | Components | One row per `components[]` entry: name, status word, detail, since age |
 | Endpoints | S3 public URL and region with copy buttons (`shell.NewCopyField`); a line `Use these with any AWS SDK: endpoint, region, path-style addressing.` |
 | Replica | `state` and pending ops from `Status.replica`; hidden when `not_available` |

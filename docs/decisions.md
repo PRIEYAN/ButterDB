@@ -32,7 +32,7 @@ application.
 | D1 | Deployment model | **Self-hosted per developer.** Each developer runs their own server with their own Telegram account. There is no central hosted service |
 | D2 | Telegram account | **The deploying developer's own account**, with their own `api_id` and `api_hash` from my.telegram.org. butterDB never ships a shared credential |
 | D3 | Tenancy | **One admin, many keys.** A deployment has one owner, who creates buckets and any number of scoped access keys for any number of applications |
-| D4 | Scale target | **Small.** Under about 2,000 daily users, under 500,000 objects and under 1 TB per deployment in its first year. One server with a disk cache; a CDN is optional |
+| D4 | Scale target | **Small.** Under about 2,000 daily users, under 500,000 objects and under 1 TB per deployment in its first year. One server with an optional disk cache, off by default (D21); a CDN is optional |
 | D5 | API surface | **S3-compatible API plus a Cloudinary-style media API.** AWS SDKs and tools work against butterDB by changing the endpoint, for the operations `docs/spec/s3-api.md` supports. Its §17 lists the deviations from AWS S3; they await owner review. Media transforms have their own URL space |
 | D6 | Object addressing | **S3-style overwritable keys.** Applications choose the bucket and the key; a second PUT to the same key replaces the object |
 | D7 | Access model | **Bucket policy plus presigned URLs.** A bucket is public-read or private. Private objects are fetched with SigV4 presigned URLs |
@@ -49,6 +49,7 @@ application.
 | D18 | Reuse of TDrive | **Port package by package.** TDrive (MIT) is the reference implementation of the storage engine. Each phase adapts the relevant TDrive package into butterDB's architecture and keeps the attribution |
 | D19 | Phase execution | **One Opus orchestrator per phase, with Sonnet workers in parallel.** Workers are defined in `.claude/agents/`, and each lane runs in its own git worktree |
 | D20 | Module path | **`github.com/PRIEYAN/ButterDB`**, matching the git remote |
+| D21 | Object bytes on the server disk | **The server keeps no object bytes on its disk by default.** Reads behave like TDrive: the listing comes from the local index, and an object's bytes are downloaded from Telegram when requested and are not kept afterwards. The origin block cache is off by default (`cache.blocks_max_bytes = 0` means off) and so is the small-object warm on PUT (`cache.warm_on_put_max_bytes = 0`); an operator may opt in by setting a positive size. Unchanged: the projection index, `control.db`, the server key, the Telegram session and the upload spool, whose files exist only while an upload runs and are deleted after the Telegram commit. Reason: the owner does not want object bytes on the server's disk (owner choice, 2026-11-16). Consequences: a repeated read downloads from Telegram again, which is slower and uses Telegram download bandwidth; `degraded` mode cannot serve reads from a cache, so a read that needs Telegram returns `503 SlowDown`; phase 13 media transforms read the original from Telegram unless the cache is enabled; D4's disk cache is optional |
 
 ---
 

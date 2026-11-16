@@ -234,8 +234,8 @@ disabled; there is no `0` value.
 | Key | Env | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
 | `cache.dir` | `BUTTERDB_CACHE_DIR` | path | `<data_dir>/cache` | Holds `blocks/` and `derived/`; may live on another local filesystem |
-| `cache.blocks_max_bytes` | `BUTTERDB_CACHE_BLOCKS_MAX_BYTES` | size | `20GiB` | Origin block cache ceiling. The derivative cache ceiling is `media.cache_max_bytes` |
-| `cache.warm_on_put_max_bytes` | `BUTTERDB_CACHE_WARM_ON_PUT_MAX_BYTES` | size | `64MiB` | Objects up to this stored size are copied from the spool into the block cache after commit; `0` disables |
+| `cache.blocks_max_bytes` | `BUTTERDB_CACHE_BLOCKS_MAX_BYTES` | size | `0` | Origin block cache ceiling. `0` disables the origin block cache and every read goes to Telegram (D21). The derivative cache ceiling is `media.cache_max_bytes` |
+| `cache.warm_on_put_max_bytes` | `BUTTERDB_CACHE_WARM_ON_PUT_MAX_BYTES` | size | `0` | Objects up to this stored size are copied from the spool into the block cache after commit; `0` disables (D21). Has no effect while `cache.blocks_max_bytes` is `0` |
 | `cache.min_free_bytes` | `BUTTERDB_CACHE_MIN_FREE_BYTES` | size | `2GiB` | Eviction also runs when the cache filesystem has less free space than this |
 
 #### `[spool]`
@@ -453,7 +453,7 @@ verify a backup copy against `state.json` (§9.6). Exit codes follow §4.2.
 | `secrets/media_signing.key` | `0600` | Media signing key (phase 13, [media-api.md](media-api.md) §7.1) | `internal/mediaapi/signing` |
 | `spool/` | `0700` | `<job id>.plain`, `<job id>.sealed` while a put job runs | `internal/ingest/spool` |
 | `multipart/<upload id>/` | `0700` | `part-<NNNNN>` files (`0600`) of open S3 multipart uploads | `internal/ingest/multipartstage` |
-| `cache/blocks/` | `0700` | Origin block cache, stored bytes (ciphertext for encrypted objects) | `internal/readpath/blockcache` |
+| `cache/blocks/` | `0700` | Origin block cache, stored bytes (ciphertext for encrypted objects); exists only when `cache.blocks_max_bytes` is above `0` (D21) | `internal/readpath/blockcache` |
 | `cache/derived/` | `0700` | Derivatives of unencrypted objects only (phase 13, [media-api.md](media-api.md) §11) | `internal/mediaapi/derivcache` |
 | `snapshots/` | `0700` | `*.bdsnap` files (§9) | `internal/ops/snapshot` |
 | `tmp/` | `0700` | Scratch for snapshot assembly, restore and rebuild; emptied at start | `internal/platform/datadir` |
@@ -657,7 +657,7 @@ link) enters operator-confirmed rediscovery ([storage-model.md](storage-model.md
 | `unlinked` | No Telegram session | `503` | `503` |
 | `syncing` | Linked; remote registry check pending or refused, rediscovery awaiting confirmation, or a channel not yet `Final` since start | `503` | `503` |
 | `ready` | Serving gate open, Telegram connected | served | served |
-| `degraded` | Serving gate opened earlier in this process, Telegram now disconnected or the write coordinator cooling down longer than `s3.request_budget` | served from projection and block cache; a cache miss that cannot be fetched within `s3.request_budget` returns `503 SlowDown` | `503 SlowDown` with `Retry-After` ([s3-api.md](s3-api.md) §12.1) |
+| `degraded` | Serving gate opened earlier in this process, Telegram now disconnected or the write coordinator cooling down longer than `s3.request_budget` | served from the projection and, only when the block cache is enabled, from the block cache; a read that needs Telegram and cannot be fetched within `s3.request_budget` returns `503 SlowDown`, which is every object read while the cache is off (D21) | `503 SlowDown` with `Retry-After` ([s3-api.md](s3-api.md) §12.1) |
 
 A server that starts while Telegram is unreachable stays `syncing`; it does not
 serve from a projection it has not re-verified. The process is the only writer
@@ -1380,8 +1380,8 @@ the values. Results describe one account at one time ([plan.md](../plan.md) §8.
 | --- | --- | --- | --- |
 | CPU | 1 vCPU | 2 vCPU | SigV4, MD5 plus SHA-256 hashing of every PUT, XChaCha20-Poly1305 at hundreds of MB/s per core; phase 13 adds transforms (+2 vCPU) |
 | Memory | 1 GiB | 2 GiB (+1–2 GiB with the transform worker) | Go heap, SQLite page caches for one writer and the read pool on two databases, 1 MiB `getFile` buffers × 12, 512 KiB upload parts × 8 per put slot |
-| Disk, data filesystem | 50 GiB SSD | 150 GiB SSD | Databases 1.5 GB plus WAL, `spool.max_bytes` 8 GiB, `spool.multipart_max_bytes` 16 GiB, local snapshots 7 × 0.7 GB, block cache |
-| Block cache | 20 GiB | 5–10 % of stored bytes (50–100 GiB at 1 TB) | Hit ratio target ≥ 0.9; cold reads are limited to a few MB/s (§13.2) |
+| Disk, data filesystem | 50 GiB SSD | 150 GiB SSD | Databases 1.5 GB plus WAL, `spool.max_bytes` 8 GiB, `spool.multipart_max_bytes` 16 GiB, local snapshots 7 × 0.7 GB, block cache when enabled (off by default, D21) |
+| Block cache, when enabled (off by default, D21) | 20 GiB | 5–10 % of stored bytes (50–100 GiB at 1 TB) | Hit ratio target ≥ 0.9; cold reads are limited to a few MB/s (§13.2). With the cache off every read is a cold read |
 | Network | 20 Mbit/s | 100 Mbit/s | 2,000 daily users × 50 requests × 200 KB is about 20 GB/day served (about 2 Mbit/s average, 10× peak); misses add the same again towards Telegram |
 | File descriptors | 4,096 | 65,536 | Listeners, MTProto pools, cache files |
 
