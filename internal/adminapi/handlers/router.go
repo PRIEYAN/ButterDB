@@ -141,6 +141,7 @@ func (a *api) registerRoutes() {
 	a.registerBucketRoutes()
 	a.registerKeyRoutes()
 	a.registerObjectRoutes()
+	a.registerStatusRoutes()
 	a.registerReplicaRoutes()
 }
 
