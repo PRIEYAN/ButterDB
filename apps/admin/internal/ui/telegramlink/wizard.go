@@ -155,8 +155,8 @@ func (w *LoginWizard) finish() {
 }
 
 func (w *LoginWizard) build() {
-	w.heading = widget.NewLabelWithStyle(w.title(), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	w.stepName = widget.NewLabel("")
+	w.heading = shell.NewHeading(w.title())
+	w.stepName = shell.NewSectionTitle("")
 	w.progress = widget.NewProgressBarInfinite()
 	w.cancel = widget.NewButton(buttonCancelLogin, func() { w.dispatch(w.v.Cancel) })
 	w.inline = make(map[vm.Field]*widget.Label)
@@ -173,8 +173,9 @@ func (w *LoginWizard) build() {
 		panel.Hide()
 		stack.Add(panel)
 	}
-	body := container.NewVBox(w.heading, w.stepName, stack, w.progress, w.cancel)
-	w.root = container.NewVScroll(container.NewPadded(body))
+	header := shell.NewPageHeader(pageKicker, w.heading)
+	body := container.NewVBox(header, w.stepName, stack, w.progress, shell.NewSectionGap(), container.NewHBox(shell.Action(w.cancel)))
+	w.root = shell.ScrollBody(shell.ReadableColumn(body))
 }
 
 func (w *LoginWizard) title() string {

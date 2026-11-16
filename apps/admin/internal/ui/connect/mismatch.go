@@ -20,7 +20,7 @@ const (
 
 type mismatchPanel struct {
 	w          *view
-	box        *fyne.Container
+	card       *shell.WindowCard
 	body       *fyne.Container
 	trustNew   *actionButton
 	disconnect *actionButton
@@ -36,15 +36,15 @@ func newMismatchPanel(w *view) *mismatchPanel {
 	})
 	p.disconnect.onEscape = w.vm.Disconnect
 	p.trustNew.onEscape = w.vm.Disconnect
-	p.box = container.NewVBox(
-		newHeading(mismatchTitle),
+	p.card = shell.NewHeaderBandCard("connect/identity-changed", mismatchTitle, container.NewVBox(
 		p.body,
-		container.NewHBox(p.disconnect, p.trustNew),
-	)
+		shell.NewSectionGap(),
+		shell.Actions(p.disconnect, p.trustNew),
+	))
 	return p
 }
 
-func (p *mismatchPanel) object() fyne.CanvasObject { return p.box }
+func (p *mismatchPanel) object() fyne.CanvasObject { return p.card }
 
 func (p *mismatchPanel) focusFirst() { focusOn(p.disconnect) }
 

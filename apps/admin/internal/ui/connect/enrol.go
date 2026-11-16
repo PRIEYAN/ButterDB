@@ -29,7 +29,7 @@ const (
 
 type claimPanel struct {
 	w       *view
-	box     *fyne.Container
+	card    *shell.WindowCard
 	token   *widget.Entry
 	device  *widget.Entry
 	warning *widget.Label
@@ -56,17 +56,17 @@ func newClaimPanel(w *view, defaultName string) *claimPanel {
 		widget.NewFormItem("Setup token", p.token),
 		widget.NewFormItem("Device name", p.device),
 	)
-	p.box = container.NewVBox(
-		newHeading(claimTitle),
+	p.card = panelCard("connect/claim", claimTitle,
 		newWrappedLabel(claimHelp),
-		p.warning,
+		shell.NewCallout(shell.CalloutWarning, p.warning),
 		form,
-		container.NewHBox(p.cancel, p.claim),
+		shell.NewSectionGap(),
+		shell.Actions(p.cancel, p.claim),
 	)
 	return p
 }
 
-func (p *claimPanel) object() fyne.CanvasObject { return p.box }
+func (p *claimPanel) object() fyne.CanvasObject { return p.card }
 
 func (p *claimPanel) focusFirst() { focusOn(p.token) }
 
@@ -101,7 +101,7 @@ func (p *claimPanel) update(s vm.State) {
 
 type pairPanel struct {
 	w         *view
-	box       *fyne.Container
+	card      *shell.WindowCard
 	device    *widget.Entry
 	code      *widget.Entry
 	request   *actionButton
@@ -137,24 +137,29 @@ func newPairPanel(w *view, defaultName string) *pairPanel {
 	p.cancel.onEscape = w.vm.Cancel
 	p.pair.onEscape = w.vm.Cancel
 	hostBox := container.NewVBox(
-		newWrappedLabel(hostChoiceText),
-		shell.NewCopyField("Command", vm.HostCommand, w.clip),
+		shell.NewFieldLabel(hostChoiceText),
+		shell.NewCodeBlock(shell.NewCopyField("Command", vm.HostCommand, w.clip)),
 	)
-	p.box = container.NewVBox(
-		newHeading(pairTitle),
-		p.warning,
+	p.sent.TextStyle = fyne.TextStyle{Monospace: true}
+	p.code.TextStyle = fyne.TextStyle{Monospace: true}
+	p.card = panelCard("connect/pair", pairTitle,
+		shell.NewCallout(shell.CalloutWarning, p.warning),
 		widget.NewForm(widget.NewFormItem("Device name", p.device)),
-		p.request,
-		p.offNotice,
-		p.sent,
+		shell.NewSectionGap(),
+		container.NewHBox(shell.Action(p.request)),
+		shell.NewCallout(shell.CalloutInfo, p.offNotice),
+		shell.NewCallout(shell.CalloutSuccess, p.sent),
+		shell.NewSectionGap(),
 		hostBox,
+		shell.NewSectionGap(),
 		widget.NewForm(widget.NewFormItem("Pairing code", p.code)),
-		container.NewHBox(p.cancel, p.pair),
+		shell.NewSectionGap(),
+		shell.Actions(p.cancel, p.pair),
 	)
 	return p
 }
 
-func (p *pairPanel) object() fyne.CanvasObject { return p.box }
+func (p *pairPanel) object() fyne.CanvasObject { return p.card }
 
 func (p *pairPanel) focusFirst() { focusOn(p.code) }
 

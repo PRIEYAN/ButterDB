@@ -60,6 +60,7 @@ func newView(v *vm.ViewModel, nav shell.Navigator, clip model.Clipboard, now fun
 	initial := v.State().Get()
 	w.notice = newWrappedLabel("")
 	w.notice.Hide()
+	notice := shell.NewCallout(shell.CalloutInfo, w.notice)
 	w.problem = container.NewVBox()
 	w.progress = widget.NewProgressBarInfinite()
 	w.progress.Hide()
@@ -76,13 +77,13 @@ func newView(v *vm.ViewModel, nav shell.Navigator, clip model.Clipboard, now fun
 		w.stack.Add(p.object())
 	}
 	body := container.NewVBox(
-		newHeading("Connect to a server"),
-		w.notice,
+		shell.NewPageHeader(pageKicker, shell.NewHeading(pageTitle)),
+		notice,
 		w.problem,
 		w.progress,
 		w.stack,
 	)
-	w.root = container.NewVScroll(container.NewPadded(body))
+	w.root = shell.ScrollBody(shell.CentredColumn(body))
 	w.render(initial)
 	v.State().Subscribe(func(s vm.State) {
 		w.dispatch(func() { w.render(s) })
@@ -133,7 +134,7 @@ func (w *view) renderBanner(s vm.State) {
 	}
 	w.problem.RemoveAll()
 	if s.Problem != nil {
-		w.problem.Add(shell.NewProblemView(*s.Problem, w.clip))
+		w.problem.Add(container.NewVBox(shell.NewCallout(shell.CalloutDanger, shell.NewProblemView(*s.Problem, w.clip)), shell.NewSectionGap()))
 	}
 	w.problem.Refresh()
 	if s.Loading {

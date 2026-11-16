@@ -2,7 +2,10 @@ package connect
 
 import (
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 )
 
 type actionButton struct {
@@ -32,6 +35,15 @@ func (b *actionButton) TypedKey(ev *fyne.KeyEvent) {
 	}
 }
 
+const (
+	pageKicker = "admin / connect"
+	pageTitle  = "Connect to a server"
+)
+
+func panelCard(label, title string, rows ...fyne.CanvasObject) *shell.WindowCard {
+	return shell.NewWindowCard(label, title, container.NewVBox(rows...))
+}
+
 func newWrappedLabel(text string) *widget.Label {
 	label := widget.NewLabel(text)
 	label.Wrapping = fyne.TextWrapWord
@@ -45,7 +57,7 @@ func newHeading(text string) *widget.Label {
 }
 
 func newMonospaceLabel(text string) *widget.Label {
-	label := widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+	label := shell.NewMono(text)
 	label.Selectable = true
 	return label
 }
