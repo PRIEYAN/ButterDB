@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect/vm"
 )
 
@@ -25,7 +26,7 @@ const (
 
 type certificatePanel struct {
 	w            *view
-	box          *fyne.Container
+	card         *shell.WindowCard
 	rebind       *widget.Label
 	fingerprint  *widget.Label
 	copyPrint    fyne.CanvasObject
@@ -51,20 +52,21 @@ func newCertificatePanel(w *view) *certificatePanel {
 	p.confirm.onEscape = w.vm.Cancel
 	p.cancel.onEscape = w.vm.Cancel
 	p.copyPrint = widget.NewButtonWithIcon("Copy fingerprint", theme.ContentCopyIcon(), func() { w.clip.SetText(p.text) })
-	p.box = container.NewVBox(
-		newHeading(verifyTitle),
-		p.rebind,
-		p.fingerprint,
-		p.copyPrint,
-		p.instructions,
+	p.facts.TextStyle = fyne.TextStyle{Monospace: true}
+	p.card = panelCard("connect/verify", verifyTitle,
+		shell.NewCallout(shell.CalloutWarning, p.rebind),
+		shell.NewCodeBlock(p.fingerprint),
+		container.NewHBox(shell.Action(p.copyPrint)),
+		shell.NewCallout(shell.CalloutInfo, p.instructions),
 		p.facts,
 		p.pinInstead,
-		container.NewHBox(p.cancel, p.confirm),
+		shell.NewSectionGap(),
+		shell.Actions(p.cancel, p.confirm),
 	)
 	return p
 }
 
-func (p *certificatePanel) object() fyne.CanvasObject { return p.box }
+func (p *certificatePanel) object() fyne.CanvasObject { return p.card }
 
 func (p *certificatePanel) focusFirst() { focusOn(p.cancel) }
 

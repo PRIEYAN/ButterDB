@@ -4,6 +4,7 @@ import "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/telegramlink/vm"
 
 const (
 	defaultTitle        = "Link Telegram"
+	pageKicker          = "admin / telegram"
 	safetyNoticeTitle   = "Account safety"
 	safetyNotice        = "Use a dedicated Telegram account that is not new, with two-step verification on. Never share your api_id. butterDB keeps a send-rate limit on; if Telegram restricts the account, objects that are not mirrored to a replica account are lost."
 	appHelp             = "Get these at my.telegram.org → API development tools"

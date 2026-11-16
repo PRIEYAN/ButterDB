@@ -4,11 +4,11 @@ import (
 	"context"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect/vm"
 )
 
@@ -25,7 +25,7 @@ const (
 
 type storagePanel struct {
 	w       *view
-	box     *fyne.Container
+	card    *shell.WindowCard
 	choice  *widget.RadioGroup
 	warning *widget.Label
 	proceed *actionButton
@@ -42,17 +42,17 @@ func newStoragePanel(w *view) *storagePanel {
 	p.cancel = newActionButton(storageCancelOf, theme.CancelIcon(), w.vm.Cancel)
 	p.cancel.onEscape = w.vm.Cancel
 	p.proceed.onEscape = w.vm.Cancel
-	p.box = container.NewVBox(
-		newHeading(storageTitle),
+	p.card = panelCard("connect/token-storage", storageTitle,
 		newWrappedLabel(storageBody),
 		p.choice,
-		p.warning,
-		container.NewHBox(p.cancel, p.proceed),
+		shell.NewCallout(shell.CalloutWarning, p.warning),
+		shell.NewSectionGap(),
+		shell.Actions(p.cancel, p.proceed),
 	)
 	return p
 }
 
-func (p *storagePanel) object() fyne.CanvasObject { return p.box }
+func (p *storagePanel) object() fyne.CanvasObject { return p.card }
 
 func (p *storagePanel) focusFirst() { focusOn(p.cancel) }
 

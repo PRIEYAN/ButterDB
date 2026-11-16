@@ -50,13 +50,13 @@ func newProfilesPanel(w *view) *profilesPanel {
 		widget.NewFormItem("Name", p.label),
 	)
 	p.box = container.NewVBox(
-		newHeading("Your servers"),
-		p.empty,
-		p.list,
-		widget.NewSeparator(),
-		newHeading("Add a server"),
-		form,
-		p.continues,
+		shell.NewWindowCard("connect/servers", "Your servers", container.NewVBox(p.empty, p.list)),
+		shell.NewSectionGap(),
+		shell.NewWindowCard("connect/new-server", "Add a server", container.NewVBox(
+			form,
+			shell.NewSectionGap(),
+			container.NewHBox(shell.Action(p.continues)),
+		)),
 	)
 	return p
 }
@@ -111,13 +111,17 @@ func (p *profilesPanel) rowFor(row vm.ProfileRow, loading bool) fyne.CanvasObjec
 	}
 	rename := newActionButton("Rename", theme.DocumentCreateIcon(), func() { p.rename(row) })
 	forget := newActionButton("Forget", theme.DeleteIcon(), func() { p.forget(row) })
-	details := widget.NewLabel(row.URL + "   last used " + shell.FormatAge(row.LastUsed, p.w.now()))
-	trust := widget.NewLabelWithStyle(trustText(row.TrustMode), fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
-	return container.NewVBox(
+	details := shell.NewMono(row.URL + "   last used " + shell.FormatAge(row.LastUsed, p.w.now()))
+	details.Truncation = fyne.TextTruncateEllipsis
+	trust := shell.NewKicker(trustText(row.TrustMode))
+	summary := container.NewVBox(
 		newHeading(row.Label),
 		details,
 		container.NewHBox(widget.NewIcon(trustIcon(row.TrustMode)), trust),
-		container.NewHBox(connect, rename, forget),
+	)
+	actions := container.NewVBox(shell.Actions(connect, rename, forget))
+	return container.NewVBox(
+		container.NewBorder(nil, nil, nil, actions, summary),
 		widget.NewSeparator(),
 	)
 }

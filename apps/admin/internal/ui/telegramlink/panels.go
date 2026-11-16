@@ -62,10 +62,18 @@ func wrapped(text string) *widget.Label {
 }
 
 func newNotice() fyne.CanvasObject {
-	return widget.NewCard(safetyNoticeTitle, "", wrapped(safetyNotice))
+	return container.NewVBox(shell.NewHighlightCard("telegram/account-safety", safetyNoticeTitle, wrapped(safetyNotice)), shell.NewSectionGap())
 }
 
-func (w *LoginWizard) newInline(fields ...vm.Field) *widget.Label {
+func stepCard(label string, rows ...fyne.CanvasObject) fyne.CanvasObject {
+	return shell.NewWindowCard(label, "", container.NewVBox(rows...))
+}
+
+func primary(button *widget.Button) fyne.CanvasObject {
+	return container.NewHBox(shell.Action(button))
+}
+
+func (w *LoginWizard) newInline(fields ...vm.Field) fyne.CanvasObject {
 	label := widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 	label.Importance = widget.DangerImportance
 	label.Wrapping = fyne.TextWrapWord
@@ -73,7 +81,7 @@ func (w *LoginWizard) newInline(fields ...vm.Field) *widget.Label {
 	for _, field := range fields {
 		w.inline[field] = label
 	}
-	return label
+	return shell.NewCallout(shell.CalloutDanger, label)
 }
 
 func (w *LoginWizard) buildApp() fyne.CanvasObject {
@@ -95,11 +103,14 @@ func (w *LoginWizard) buildApp() fyne.CanvasObject {
 	form := widget.NewForm(widget.NewFormItem(labelAPIID, p.id), widget.NewFormItem(labelAPIHash, p.hash))
 	return container.NewVBox(
 		p.notice,
-		wrapped(appHelp),
-		portal,
-		form,
-		w.newInline(vm.FieldAPIID, vm.FieldAPIHash),
-		p.submit,
+		stepCard("telegram/app-credentials",
+			wrapped(appHelp),
+			portal,
+			form,
+			w.newInline(vm.FieldAPIID, vm.FieldAPIHash),
+			shell.NewSectionGap(),
+			primary(p.submit),
+		),
 	)
 }
 
@@ -123,25 +134,27 @@ func (w *LoginWizard) buildPhone() fyne.CanvasObject {
 	}
 	return container.NewVBox(
 		notice,
-		wrapped(phoneHelp),
-		widget.NewForm(widget.NewFormItem(labelPhone, p.entry)),
-		w.newInline(vm.FieldPhone),
-		p.submit,
-		p.change,
+		stepCard("telegram/phone",
+			wrapped(phoneHelp),
+			widget.NewForm(widget.NewFormItem(labelPhone, p.entry)),
+			w.newInline(vm.FieldPhone),
+			shell.NewSectionGap(),
+			container.NewHBox(shell.Action(p.submit), p.change),
+		),
 	)
 }
 
 func (w *LoginWizard) buildWait() fyne.CanvasObject {
 	w.wait.text = wrapped(waitText)
-	return container.NewVBox(w.wait.text)
+	return stepCard("telegram/sending-code", w.wait.text)
 }
 
 func (w *LoginWizard) buildCode() fyne.CanvasObject {
 	p := &w.code
 	p.delivery = wrapped("")
-	p.phone = widget.NewLabel("")
-	p.attempts = widget.NewLabel("")
-	p.expires = widget.NewLabel("")
+	p.phone = shell.NewMono("")
+	p.attempts = shell.NewMono("")
+	p.expires = shell.NewMono("")
 	p.entry = widget.NewEntry()
 	p.entry.OnChanged = func(text string) {
 		if p.length > 0 && len([]rune(text)) > p.length {
@@ -151,21 +164,22 @@ func (w *LoginWizard) buildCode() fyne.CanvasObject {
 	p.entry.OnSubmitted = func(string) { w.submitCode() }
 	p.submit = widget.NewButtonWithIcon(buttonSubmitCode, theme.ConfirmIcon(), w.submitCode)
 	p.submit.Importance = widget.HighImportance
-	return container.NewVBox(
+	p.entry.TextStyle = fyne.TextStyle{Monospace: true}
+	return stepCard("telegram/login-code",
 		p.delivery,
-		p.phone,
-		p.expires,
+		shell.NewCodeBlock(container.NewVBox(p.phone, p.expires)),
 		widget.NewForm(widget.NewFormItem(labelCode, p.entry)),
 		p.attempts,
 		w.newInline(vm.FieldCode),
-		p.submit,
+		shell.NewSectionGap(),
+		primary(p.submit),
 	)
 }
 
 func (w *LoginWizard) buildPassword() fyne.CanvasObject {
 	p := &w.password
 	p.hint = wrapped("")
-	p.attempts = widget.NewLabel("")
+	p.attempts = shell.NewMono("")
 	p.entry = widget.NewEntry()
 	p.entry.Password = true
 	p.entry.OnSubmitted = func(string) { w.submitPassword() }
@@ -175,25 +189,26 @@ func (w *LoginWizard) buildPassword() fyne.CanvasObject {
 	})
 	p.submit = widget.NewButtonWithIcon(buttonSubmitPass, theme.ConfirmIcon(), w.submitPassword)
 	p.submit.Importance = widget.HighImportance
-	return container.NewVBox(
+	return stepCard("telegram/two-step-password",
 		wrapped(passwordHelp),
-		p.hint,
+		shell.NewCallout(shell.CalloutInfo, p.hint),
 		widget.NewForm(widget.NewFormItem(labelPassword, p.entry)),
 		show,
 		p.attempts,
 		w.newInline(vm.FieldPassword),
-		p.submit,
+		shell.NewSectionGap(),
+		primary(p.submit),
 	)
 }
 
 func (w *LoginWizard) buildDone() fyne.CanvasObject {
 	p := &w.done
-	p.name = widget.NewLabelWithStyle("", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	p.username = widget.NewLabel("")
-	p.phone = widget.NewLabel("")
+	p.name = shell.NewSectionTitle("")
+	p.username = shell.NewMono("")
+	p.phone = shell.NewMono("")
 	p.next = widget.NewButtonWithIcon(buttonContinue, theme.NavigateNextIcon(), w.finish)
 	p.next.Importance = widget.HighImportance
-	return container.NewVBox(p.name, p.username, p.phone, p.next)
+	return stepCard("telegram/linked", p.name, p.username, p.phone, shell.NewSectionGap(), primary(p.next))
 }
 
 func (w *LoginWizard) submitApp() {
