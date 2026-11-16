@@ -569,7 +569,7 @@ func TestBatchDeletePartialFailure(t *testing.T) {
 	if got := h.writer.deletes; len(got) != 3 || got[0] != "cat.jpg" || got[1] != "dog.jpg" || got[2] != "ghost.jpg" {
 		t.Fatalf("deletes happened out of order or skipped: %v", got)
 	}
-	if len(h.audit.records) != 1 || h.audit.records[0].Action != "object.delete_batch" || h.audit.records[0].Outcome != "partial" || h.audit.records[0].ErrorCode != "telegram_flood_wait" {
+	if len(h.audit.records) != 1 || h.audit.records[0].Action != "object.delete_batch" || h.audit.records[0].Outcome != "failure" || h.audit.records[0].ErrorCode != "telegram_flood_wait" {
 		t.Fatalf("audit = %+v", h.audit.records)
 	}
 	t.Run("all deleted", func(t *testing.T) {

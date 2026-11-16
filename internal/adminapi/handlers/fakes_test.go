@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -229,6 +230,7 @@ func (f *fakeWriter) Delete(_ context.Context, _ bucket.BucketName, k object.Key
 }
 
 type fakeServer struct {
+	panics any
 	err    error
 	served []object.Key
 	status int
@@ -237,6 +239,9 @@ type fakeServer struct {
 
 func (f *fakeServer) ServeObject(w http.ResponseWriter, r *http.Request, _ bucket.BucketName, k object.Key) error {
 	f.served = append(f.served, k)
+	if f.panics != nil {
+		panic(f.panics)
+	}
 	if f.err != nil {
 		return f.err
 	}
@@ -273,6 +278,7 @@ func (f *fakeStatus) Status(context.Context) (adminv1.Status, error) { return f.
 func (f *fakeStatus) Usage(context.Context) (adminv1.Usage, error)   { return f.usage, f.err }
 
 type fakeAudit struct {
+	t       *testing.T
 	mu      sync.Mutex
 	records []AuditRecord
 	page    adminv1.AuditPage
@@ -281,6 +287,10 @@ type fakeAudit struct {
 }
 
 func (f *fakeAudit) Record(_ context.Context, e AuditRecord) error {
+	if e.Outcome != "success" && e.Outcome != "failure" {
+		f.t.Errorf("audit outcome %q violates the admin_audit CHECK (success, failure): %+v", e.Outcome, e)
+		return errors.New("audit: invalid outcome")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records = append(f.records, e)
@@ -477,7 +487,7 @@ func newHarness(t *testing.T) *harness {
 		server:  &fakeServer{body: "bytes"},
 		presign: &fakePresigner{url: "https://s3.example.com/photos/a?X-Amz-Signature=x", expires: testStart.Add(time.Hour)},
 		status:  &fakeStatus{},
-		audit:   &fakeAudit{},
+		audit:   &fakeAudit{t: t},
 		setup:   &fakeSetup{relay: &fakeRelay{}},
 		pairing: &fakePairing{},
 		devices: &fakeDevices{},

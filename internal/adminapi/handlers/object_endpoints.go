@@ -206,11 +206,8 @@ func (a *api) deleteOne(ctx context.Context, name bucket.BucketName, raw string,
 
 func (a *api) recordBatch(r *http.Request, name bucket.BucketName, result adminv1.DeleteObjectsResult) {
 	outcome, code := outcomeSuccess, ""
-	switch {
-	case len(result.Errors) > 0 && len(result.Deleted) == 0:
+	if len(result.Errors) > 0 {
 		outcome, code = outcomeFailure, string(result.Errors[0].Code)
-	case len(result.Errors) > 0:
-		outcome, code = outcomePartial, string(result.Errors[0].Code)
 	}
 	a.writeAudit(r, a.actor(r.Context()), "object.delete_batch", string(name), outcome, code)
 }

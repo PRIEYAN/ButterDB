@@ -10,7 +10,6 @@ import (
 const (
 	outcomeSuccess = "success"
 	outcomeFailure = "failure"
-	outcomePartial = "partial"
 
 	actorDevice    = "device"
 	actorAnonymous = "anonymous"
