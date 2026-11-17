@@ -50,8 +50,8 @@ function check(pkg, imp,   r, ir) {
 		if (inmod(imp) && under(ir, "apps"))
 			violate("L7", pkg, imp, "the root module must not import apps/...")
 	}
-	if (kind == "app" && !inmod(imp) && (imp == rootmod || index(imp, rootmod "/") == 1) && !under(substr(imp, length(rootmod) + 2), "api"))
-		violate("L8", pkg, imp, "apps modules may import only api/... from the root module")
+	if (kind == "app" && !inmod(imp) && (imp == rootmod || index(imp, rootmod "/") == 1) && !under(substr(imp, length(rootmod) + 2), "api") && !(mod == rootmod "/apps/admin" && imp == rootmod "/internal/embedded"))
+		violate("L8", pkg, imp, "apps modules may import only api/... from the root module, and apps/admin also internal/embedded")
 }
 function flush(   i, key) {
 	if (path != "" && !deponly) {

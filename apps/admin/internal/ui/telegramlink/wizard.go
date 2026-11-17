@@ -173,7 +173,7 @@ func (w *LoginWizard) build() {
 		panel.Hide()
 		stack.Add(panel)
 	}
-	header := shell.NewPageHeader(pageKicker, w.heading)
+	header := shell.NewPageHeader("", w.heading)
 	body := container.NewVBox(header, w.stepName, stack, w.progress, shell.NewSectionGap(), container.NewHBox(shell.Action(w.cancel)))
 	w.root = shell.ScrollBody(shell.ReadableColumn(body))
 }

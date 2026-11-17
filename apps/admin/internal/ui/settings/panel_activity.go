@@ -96,3 +96,19 @@ func auditHeader() []fyne.CanvasObject {
 	}
 	return cells
 }
+
+func auditWeights() []float32 {
+	return []float32{1.5, 1.1, 1.8, 1.2, 0.9, 1.7, 1.5}
+}
+
+func cell(text string) fyne.CanvasObject {
+	return dataCell(text, false)
+}
+
+func dataCell(text string, mono bool) fyne.CanvasObject {
+	label := widget.NewLabel(text)
+	label.TextStyle = fyne.TextStyle{Monospace: mono}
+	label.Wrapping = fyne.TextWrapWord
+	label.Selectable = true
+	return label
+}

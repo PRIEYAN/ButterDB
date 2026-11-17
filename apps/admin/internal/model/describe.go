@@ -48,12 +48,11 @@ func Describe(err error, now time.Time) Problem {
 	if errors.As(err, &apiErr) && apiErr != nil {
 		return describeAPI(apiErr, now)
 	}
-	var mismatch *adminv1.PinMismatchError
-	if errors.As(err, &mismatch) && mismatch != nil {
-		return describePinMismatch(mismatch)
-	}
 	if errors.Is(err, context.Canceled) {
 		return Problem{}
+	}
+	if p, ok := describeEmbedded(err); ok {
+		return p
 	}
 	if isCertificateError(err) {
 		return Problem{Title: textCertificateUntrust, Presentation: PresentDialog, Details: errorDetails(err)}
@@ -131,16 +130,6 @@ func apiDetails(apiErr *adminv1.APIError) map[string]any {
 	maps.Copy(details, apiErr.Body.Details)
 	details[detailHTTPStatus] = apiErr.Status
 	return details
-}
-
-func describePinMismatch(m *adminv1.PinMismatchError) Problem {
-	return Problem{
-		Title:        textPinMismatchTitle,
-		Body:         textPinMismatchBody,
-		Presentation: PresentRoute,
-		Route:        RouteConnect,
-		Details:      map[string]any{"expected": m.Expected, "got": m.Got},
-	}
 }
 
 func errorDetails(err error) map[string]any {

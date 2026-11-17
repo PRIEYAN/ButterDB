@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -23,24 +22,17 @@ type sessionAPI interface {
 	HeadObject(ctx context.Context, bucket, key string) (adminv1.ObjectMeta, error)
 	ListAccessKeys(ctx context.Context, includeRevoked bool) (adminv1.AccessKeyList, error)
 	ListBuckets(ctx context.Context) (adminv1.BucketList, error)
-	ListDevices(ctx context.Context) (adminv1.DeviceList, error)
 	ListObjects(ctx context.Context, bucket string, opts adminv1.ListObjectsOptions) (adminv1.ObjectList, error)
 	ObjectMeta(ctx context.Context, bucket, key string) (adminv1.ObjectMeta, error)
 	Presign(ctx context.Context, bucket string, req adminv1.PresignRequest) (adminv1.PresignedURL, error)
 	PutObject(ctx context.Context, bucket, key string, body io.Reader, size int64, opts adminv1.PutObjectOptions) (adminv1.ObjectMeta, error)
-	RenameDevice(ctx context.Context, deviceID string, req adminv1.UpdateDeviceRequest) (adminv1.Device, error)
 	RevokeAccessKey(ctx context.Context, id string) (adminv1.AccessKey, error)
-	RevokeDevice(ctx context.Context, deviceID string, confirmLast bool) error
-	RotateDeviceToken(ctx context.Context) (adminv1.DeviceCredentials, error)
 	SaveTelegramCredentials(ctx context.Context, req adminv1.TelegramCredentialsRequest) (adminv1.TelegramStatus, error)
-	ServerInfo(ctx context.Context) (adminv1.ServerInfo, error)
-	SetToken(token string)
 	StartTelegramLogin(ctx context.Context, req adminv1.TelegramLoginStartRequest) (adminv1.TelegramStatus, error)
 	Status(ctx context.Context) (adminv1.Status, error)
 	SubmitTelegramCode(ctx context.Context, req adminv1.TelegramCodeRequest) (adminv1.TelegramStatus, error)
 	SubmitTelegramPassword(ctx context.Context, req adminv1.TelegramPasswordRequest) (adminv1.TelegramStatus, error)
 	TelegramStatus(ctx context.Context) (adminv1.TelegramStatus, error)
-	UnlinkTelegram(ctx context.Context) (adminv1.TelegramStatus, error)
 	UpdateAccessKey(ctx context.Context, id string, req adminv1.UpdateAccessKeyRequest) (adminv1.AccessKey, error)
 	UpdateBucket(ctx context.Context, name string, req adminv1.UpdateBucketRequest) (adminv1.Bucket, error)
 	Usage(ctx context.Context) (adminv1.Usage, error)
@@ -69,35 +61,7 @@ func (g *guardedClient) note(err error) error {
 }
 
 func isSessionError(err error) bool {
-	var mismatch *adminv1.PinMismatchError
-	if errors.As(err, &mismatch) && mismatch != nil {
-		return true
-	}
-	return adminv1.IsCode(err, adminv1.CodeUnauthenticated) || adminv1.IsCode(err, adminv1.CodeDeviceRevoked)
-}
-
-func (g *guardedClient) SetToken(token string) {
-	g.upstream.SetToken(token)
-}
-
-func (g *guardedClient) ServerInfo(ctx context.Context) (adminv1.ServerInfo, error) {
-	v, err := g.upstream.ServerInfo(ctx)
-	return v, g.note(err)
-}
-
-func (g *guardedClient) RotateDeviceToken(ctx context.Context) (adminv1.DeviceCredentials, error) {
-	v, err := g.upstream.RotateDeviceToken(ctx)
-	return v, g.note(err)
-}
-
-func (g *guardedClient) ListDevices(ctx context.Context) (adminv1.DeviceList, error) {
-	v, err := g.upstream.ListDevices(ctx)
-	return v, g.note(err)
-}
-
-func (g *guardedClient) RenameDevice(ctx context.Context, deviceID string, req adminv1.UpdateDeviceRequest) (adminv1.Device, error) {
-	v, err := g.upstream.RenameDevice(ctx, deviceID, req)
-	return v, g.note(err)
+	return adminv1.IsCode(err, adminv1.CodeUnauthenticated) || adminv1.IsCode(err, adminv1.CodeTelegramNotLinked)
 }
 
 func (g *guardedClient) TelegramStatus(ctx context.Context) (adminv1.TelegramStatus, error) {
@@ -132,11 +96,6 @@ func (g *guardedClient) SubmitTelegramPassword(ctx context.Context, req adminv1.
 
 func (g *guardedClient) CancelTelegramLogin(ctx context.Context) (adminv1.TelegramStatus, error) {
 	v, err := g.upstream.CancelTelegramLogin(ctx)
-	return v, g.note(err)
-}
-
-func (g *guardedClient) UnlinkTelegram(ctx context.Context) (adminv1.TelegramStatus, error) {
-	v, err := g.upstream.UnlinkTelegram(ctx)
 	return v, g.note(err)
 }
 
@@ -228,10 +187,6 @@ func (g *guardedClient) DeleteObjects(ctx context.Context, bucket string, req ad
 func (g *guardedClient) Presign(ctx context.Context, bucket string, req adminv1.PresignRequest) (adminv1.PresignedURL, error) {
 	v, err := g.upstream.Presign(ctx, bucket, req)
 	return v, g.note(err)
-}
-
-func (g *guardedClient) RevokeDevice(ctx context.Context, deviceID string, confirmLast bool) error {
-	return g.note(g.upstream.RevokeDevice(ctx, deviceID, confirmLast))
 }
 
 func (g *guardedClient) DeleteBucket(ctx context.Context, name string) error {

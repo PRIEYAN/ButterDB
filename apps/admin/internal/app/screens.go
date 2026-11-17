@@ -13,6 +13,7 @@ import (
 
 type hookedScreen struct {
 	shell.Screen
+	life         context.Context
 	beforeShow   func(ctx context.Context, p model.Params) bool
 	whenLoopRuns func(func())
 }
@@ -21,6 +22,7 @@ func (h hookedScreen) Show(ctx context.Context, p model.Params) {
 	if h.beforeShow != nil && !h.beforeShow(ctx, p) {
 		return
 	}
+	ctx = tiedTo(ctx, h.life)
 	if h.whenLoopRuns == nil {
 		h.Screen.Show(ctx, p)
 		return
@@ -67,4 +69,14 @@ func (g *closeGuardWindow) requestClose() {
 func (g *closeGuardWindow) bindQuitShortcut() {
 	shortcut := &desktop.CustomShortcut{KeyName: fyne.KeyQ, Modifier: fyne.KeyModifierShortcutDefault}
 	g.Window.Canvas().AddShortcut(shortcut, func(fyne.Shortcut) { g.requestClose() })
+}
+
+func tiedTo(ctx, life context.Context) context.Context {
+	if life == nil {
+		return ctx
+	}
+	tied, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(life, cancel)
+	context.AfterFunc(tied, func() { stop() })
+	return tied
 }

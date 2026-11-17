@@ -49,6 +49,7 @@ type AdminDependencies struct {
 	Random     io.Reader
 	Logger     *slog.Logger
 	Hostname   func() (string, error)
+	Embedded   bool
 }
 
 type Admin struct {
@@ -154,7 +155,7 @@ func (a *Admin) assembleRouter(limiter *session.Limiter, tokens *session.Tokens,
 		Pairing: newPairingEndpoints(pairing, limiter, deps.ServerID),
 		Devices: newDeviceService(a.repo, tokens, deps.Clock),
 		Device:  session.DeviceFromContext,
-		Auth:    failures.wrap(authenticator.Middleware),
+		Auth:    a.authMiddleware(failures, authenticator),
 		Clock:   deps.Clock,
 		Random:  deps.Random,
 		Logger:  deps.Logger,

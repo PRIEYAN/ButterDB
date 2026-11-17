@@ -167,3 +167,16 @@ func resolveFromDialogs(ctx context.Context, channelID int64, queries ...dialogs
 	}
 	return tgclient.InputPeer{}, fmt.Errorf("%w: no accessible dialog for channel", tgclient.ErrChannelUnavailable)
 }
+
+func (c *Client) EditChannelTitle(ctx context.Context, peer tgclient.InputPeer, title string) error {
+	return c.write(ctx, tgclient.WriteChannel, "edit channel title", func(ctx context.Context, api *tg.Client) error {
+		_, err := api.ChannelsEditTitle(ctx, &tg.ChannelsEditTitleRequest{
+			Channel: &tg.InputChannel{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash},
+			Title:   title,
+		})
+		if err != nil && !tg.IsChatNotModified(err) {
+			return mapSendError(err)
+		}
+		return nil
+	})
+}

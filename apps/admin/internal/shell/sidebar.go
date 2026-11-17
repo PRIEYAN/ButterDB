@@ -30,13 +30,14 @@ type sidebarEntry struct {
 
 type sidebar struct {
 	list    *widget.List
+	project *widget.Label
 	root    fyne.CanvasObject
 	entries []sidebarEntry
 	syncing bool
 	onPick  func(model.Route)
 }
 
-func newSidebar(onPick func(model.Route), onSwitchServer func()) *sidebar {
+func newSidebar(onPick func(model.Route), onSwitchProject func()) *sidebar {
 	sb := &sidebar{onPick: onPick}
 	sb.list = widget.NewList(
 		func() int { return len(sb.entries) },
@@ -44,14 +45,24 @@ func newSidebar(onPick func(model.Route), onSwitchServer func()) *sidebar {
 		sb.update,
 	)
 	sb.list.OnSelected = sb.selected
-	switchServer := Action(widget.NewButtonWithIcon("Switch server", theme.LogoutIcon(), onSwitchServer))
-	brand := container.NewVBox(NewSectionTitle(brandName), NewKicker(brandKicker))
+	switchProject := Action(widget.NewButtonWithIcon("Switch project", theme.LogoutIcon(), onSwitchProject))
+	sb.project = NewKicker(brandKicker)
+	sb.project.Wrapping = fyne.TextWrapWord
+	brand := container.NewVBox(NewSectionTitle(brandName), sb.project)
 	header := container.NewVBox(Inset(gridUnit, gridUnit, gridUnit, gridUnit, brand), widget.NewSeparator(), VerticalSpace(gridUnit))
-	footer := container.NewVBox(widget.NewSeparator(), Inset(gridUnit, gridUnit, gridUnit, gridUnit, switchServer))
+	footer := container.NewVBox(widget.NewSeparator(), Inset(gridUnit, gridUnit, gridUnit, gridUnit, switchProject))
 	width := FixedSpace(theme.TextSize()*sidebarWidth, 0)
 	body := container.NewBorder(header, footer, nil, nil, container.NewStack(width, sb.list))
 	sb.root = container.NewBorder(nil, nil, nil, widget.NewSeparator(), body)
 	return sb
+}
+
+func (sb *sidebar) setProject(name string) {
+	if name == "" {
+		sb.project.SetText(brandKicker)
+		return
+	}
+	sb.project.SetText(name)
 }
 
 func newSidebarItem() fyne.CanvasObject {

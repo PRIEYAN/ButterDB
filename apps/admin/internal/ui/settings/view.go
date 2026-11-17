@@ -21,9 +21,7 @@ const (
 	gridGap         = 8
 	pairNameEms     = 12
 
-	stepConnection  = "connection"
-	stepDevice      = "device"
-	stepDevices     = "devices"
+	stepProject     = "project"
 	stepTelegram    = "telegram"
 	stepActivity    = "activity"
 	stepAbout       = "about"
@@ -55,6 +53,7 @@ type view struct {
 	list    *widget.List
 	stack   *fyne.Container
 	entries []sectionEntry
+	project *projectPanel
 
 	mu          sync.Mutex
 	ctx         context.Context
@@ -67,11 +66,10 @@ type view struct {
 }
 
 func newView(v *vm.ViewModel, nav shell.Navigator, n shell.Notifier, clip model.Clipboard, win fyne.Window) *view {
-	w := &view{vm: v, nav: nav, notifier: n, clip: clip, win: win, post: fyne.Do, ctx: context.Background(), selected: stepConnection}
+	w := &view{vm: v, nav: nav, notifier: n, clip: clip, win: win, post: fyne.Do, ctx: context.Background(), selected: stepProject}
+	w.project = newProjectPanel(w)
 	w.entries = []sectionEntry{
-		{stepConnection, "Connection", newConnectionPanel(w)},
-		{stepDevice, "This device", newDevicePanel(w)},
-		{stepDevices, "Devices", newDevicesPanel(w)},
+		{stepProject, "Project", w.project},
 		{stepTelegram, "Telegram account", newTelegramPanel(w)},
 		{stepActivity, "Activity", newActivityPanel(w)},
 		{stepAbout, "About", newAboutPanel(w)},
@@ -116,7 +114,7 @@ func (w *view) build() {
 	split.SetOffset(0)
 	header := shell.NewPageHeader(pageKicker, shell.NewHeading("Settings"))
 	w.root = container.NewBorder(header, nil, nil, nil, split)
-	w.showStep(stepConnection, true)
+	w.showStep(stepProject, true)
 }
 
 func (w *view) isSyncing() bool {

@@ -34,7 +34,6 @@ func aboutStatic(appVersion, serverVersion string) AboutState {
 		ServerVersion: serverVersion,
 		Licences: []Licence{
 			{Name: "Fyne", Licence: "BSD-3-Clause"},
-			{Name: "go-keyring", Licence: "MIT"},
 			{Name: "golang.org/x/image", Licence: "BSD-3-Clause"},
 		},
 	}

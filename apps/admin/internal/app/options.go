@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
-	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
-	connectvm "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect/vm"
+	"github.com/PRIEYAN/ButterDB/internal/embedded"
 )
 
 const (
@@ -17,16 +17,16 @@ const (
 
 var ErrMissingDependency = errors.New("missing dependency")
 
+type Engine interface {
+	http.RoundTripper
+	embedded.Projects
+}
+
 type Options struct {
 	Version     string
 	Now         func() time.Time
-	Dialer      connectvm.Dialer
-	Tokens      model.TokenStore
-	Store       model.ProfileStore
-	Files       model.TokenStore
-	Memory      model.TokenStore
+	Engine      Engine
 	Random      io.Reader
-	DeviceName  string
 	DownloadDir string
 }
 
@@ -36,11 +36,7 @@ func (o Options) validate() error {
 		missing bool
 	}{
 		{"clock", o.Now == nil},
-		{"dialer", o.Dialer == nil},
-		{"keychain tokens", o.Tokens == nil},
-		{"file tokens", o.Files == nil},
-		{"memory tokens", o.Memory == nil},
-		{"profile store", o.Store == nil},
+		{"engine", o.Engine == nil},
 	}
 	for _, c := range checks {
 		if c.missing {
@@ -48,15 +44,4 @@ func (o Options) validate() error {
 		}
 	}
 	return nil
-}
-
-func (o Options) tokenStoreFor(kind model.TokenStorage) model.TokenStore {
-	switch kind {
-	case model.TokenFile:
-		return o.Files
-	case model.TokenMemory:
-		return o.Memory
-	default:
-		return o.Tokens
-	}
 }

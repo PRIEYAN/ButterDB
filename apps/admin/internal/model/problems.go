@@ -15,10 +15,10 @@ const (
 	textMisdirected         = "The server rejected this host name. Add it to admin.hostnames on the server."
 	textPayloadTooLarge     = "The request is too large."
 	textNotImplemented      = "This server does not support this feature yet."
-	textNotSignedIn         = "This device is no longer signed in."
+	textNotSignedIn         = "Telegram signed this app out. Log in again."
 	textRevoked             = "This device was revoked."
-	textAlreadyClaimed      = "This server is already set up. Pair this device instead."
-	textNotClaimed          = "This server is not set up yet. Use its setup token."
+	textAlreadyClaimed      = "This engine is already set up."
+	textNotClaimed          = "This engine is not set up yet."
 	textSetupTokenInvalid   = "That setup token is wrong, used or expired."
 	textPairingCodeInvalid  = "That code is wrong or expired."
 	textPairingUnavailable  = "Telegram is not linked. Use butterdbd admin-token on the server."
@@ -55,11 +55,9 @@ const (
 	textLoginFailed         = "Telegram could not complete the login."
 	textCheckValue          = "Check this value"
 	textUnknownCode         = "The server returned an error this app does not know."
-	textUnreachable         = "Cannot reach the server."
-	textUnreachableBody     = "Check the network connection and that the server is running."
+	textUnreachable         = "The butterDB engine is not answering."
+	textUnreachableBody     = "Close butterDB and open it again."
 	textCertificateUntrust  = "The server certificate is not trusted by this computer."
-	textPinMismatchTitle    = "Server identity changed"
-	textPinMismatchBody     = "The certificate key of this server is not the one this device trusted. This happens when the server's tls/admin.key was deleted or replaced, or when someone is intercepting the connection."
 	textUnexpected          = "Something went wrong."
 	textUnexpectedBody      = "The app hit an unexpected error."
 )
@@ -190,9 +188,9 @@ func lookup(code adminv1.Code) (entry, bool) {
 	case adminv1.CodeValidationFailed:
 		return validationFailed(), true
 	case adminv1.CodeUnauthenticated:
-		return routed(RouteConnect, textNotSignedIn), true
+		return routed(RouteTelegram, textNotSignedIn), true
 	case adminv1.CodeDeviceRevoked:
-		return routed(RouteConnect, textRevoked).withBodyFunc(revokedBody), true
+		return fixed(PresentDialog, textRevoked).withBodyFunc(revokedBody), true
 	case adminv1.CodeNotFound, adminv1.CodeMethodNotAllowed:
 		return fixed(PresentDialog, textNotOffered), true
 	case adminv1.CodeMisdirectedRequest:
@@ -208,9 +206,9 @@ func lookup(code adminv1.Code) (entry, bool) {
 	case adminv1.CodeNotImplemented:
 		return fixed(PresentInline, textNotImplemented), true
 	case adminv1.CodeAlreadyClaimed:
-		return routed(RouteConnect, textAlreadyClaimed), true
+		return fixed(PresentDialog, textAlreadyClaimed), true
 	case adminv1.CodeNotClaimed:
-		return routed(RouteConnect, textNotClaimed), true
+		return fixed(PresentDialog, textNotClaimed), true
 	case adminv1.CodeSetupTokenInvalid:
 		return fixed(PresentInline, textSetupTokenInvalid).onField(fieldSetupToken), true
 	case adminv1.CodePairingCodeInvalid:

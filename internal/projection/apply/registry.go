@@ -33,6 +33,7 @@ func NewRegistry(deps Dependencies) (*Registry, error) {
 		wire.OpBucketConfig: bucketConfigApplier{},
 		wire.OpBucketDelete: bucketDeleteApplier{generation: deps.Generation},
 		wire.OpEncConfig:    encConfigApplier{generation: deps.Generation},
+		wire.OpKeyEscrow:    keyEscrowApplier{},
 	}}, nil
 }
 

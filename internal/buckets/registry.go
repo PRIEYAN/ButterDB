@@ -3,6 +3,7 @@ package buckets
 import (
 	"context"
 	"fmt"
+	"io"
 
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/syncer"
@@ -12,6 +13,7 @@ import (
 const (
 	registryChannelTitle   = "butterDB registry"
 	writerSetup            = "sys.setup"
+	writerEscrow           = "sys.escrow"
 	purposeRegistryMarker  = "reg:1"
 	initialMinReaderFormat = 1
 )
@@ -24,6 +26,7 @@ type RegistryProvisioner struct {
 	creator        ChannelCreator
 	deploymentID   string
 	keyFingerprint string
+	title          string
 }
 
 func NewRegistryProvisioner(deps RegistryDependencies) (*RegistryProvisioner, error) {
@@ -53,6 +56,7 @@ func NewRegistryProvisioner(deps RegistryDependencies) (*RegistryProvisioner, er
 		creator:        deps.Creator,
 		deploymentID:   deps.DeploymentID,
 		keyFingerprint: deps.KeyFingerprint,
+		title:          titleOrDefault(deps.Title),
 	}, nil
 }
 
@@ -114,11 +118,11 @@ func (p *RegistryProvisioner) registryChannel(ctx context.Context) (syncer.Chann
 		return state, true, nil
 	}
 	about := fmt.Sprintf("butterDB registry %s. Do not post, edit or delete messages here.", p.deploymentID)
-	peer, err := p.creator.CreateChannel(ctx, registryChannelTitle, about)
+	peer, err := p.creator.CreateChannel(ctx, p.title, about)
 	if err != nil {
 		return syncer.ChannelState{}, false, fmt.Errorf("buckets: create registry channel: %w", err)
 	}
-	row := syncer.ChannelState{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash, Kind: syncer.KindRegistry, Title: registryChannelTitle}
+	row := syncer.ChannelState{ChannelID: peer.ChannelID, AccessHash: peer.AccessHash, Kind: syncer.KindRegistry, Title: p.title}
 	if err := p.publisher.channels.UpsertChannel(ctx, row); err != nil {
 		return syncer.ChannelState{}, false, fmt.Errorf("buckets: record registry channel %d: %w", peer.ChannelID, err)
 	}
@@ -140,4 +144,28 @@ func (p *RegistryProvisioner) markerOp() wire.Op {
 		Writer:           writerSetup,
 		Timestamp:        p.publisher.clock.Now().Unix(),
 	}
+}
+
+func (p *RegistryProvisioner) PublishEscrow(ctx context.Context, op wire.Op, random io.Reader) (int64, error) {
+	state, found, err := p.state.LoadRegistryState(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("buckets: load registry state: %w", err)
+	}
+	if !found {
+		return 0, fmt.Errorf("buckets: publish key escrow: registry not set up")
+	}
+	jobID, err := newJobID(random)
+	if err != nil {
+		return 0, err
+	}
+	op.Type = wire.OpKeyEscrow
+	op.JobID = jobID
+	op.Writer = writerEscrow
+	op.Timestamp = p.publisher.clock.Now().Unix()
+	channel := syncer.ChannelState{ChannelID: state.ChannelID, AccessHash: state.AccessHash, Kind: syncer.KindRegistry, Title: p.title}
+	return p.publisher.publish(ctx, publication{channel: channel, op: op, seed: p.deploymentID, purpose: "kesc:" + jobID})
+}
+
+func (p *RegistryProvisioner) State(ctx context.Context) (RegistryState, bool, error) {
+	return p.state.LoadRegistryState(ctx)
 }

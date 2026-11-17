@@ -55,6 +55,13 @@ type Candidate struct {
 	MarkerMsgID      int64
 	LiveBuckets      int
 	Foreign          ForeignReason
+	Escrow           wire.Op
+	EscrowMsgID      int64
+	EscrowMsgIDs     []int64
+}
+
+func (c Candidate) HasEscrow() bool {
+	return c.EscrowMsgID > 0
 }
 
 func (c Candidate) Eligible() bool {
@@ -87,9 +94,6 @@ type Discoverer struct {
 func NewDiscoverer(deps DiscoveryDependencies) (*Discoverer, error) {
 	if deps.Telegram == nil {
 		return nil, fmt.Errorf("reconcile: %w: telegram", errs.ErrMissingDependency)
-	}
-	if deps.Identity.KeyFingerprint == "" {
-		return nil, fmt.Errorf("reconcile: %w: key fingerprint", errs.ErrMissingDependency)
 	}
 	if deps.Identity.UserID <= 0 {
 		return nil, fmt.Errorf("reconcile: %w: authorized user", errs.ErrMissingDependency)
@@ -159,7 +163,7 @@ func (d *Discoverer) Adopt(candidates []Candidate, confirmedChannelID int64) (Ad
 }
 
 func (d *Discoverer) classify(fingerprint string, userID int64) ForeignReason {
-	if fingerprint != d.identity.KeyFingerprint {
+	if d.identity.KeyFingerprint != "" && fingerprint != d.identity.KeyFingerprint {
 		return ForeignKey
 	}
 	if userID != d.identity.UserID {
@@ -209,6 +213,7 @@ func (d *Discoverer) inspect(ctx context.Context, ch tgclient.Channel) (Candidat
 		MarkerMsgID:      current.msgID,
 		LiveBuckets:      liveBuckets(history),
 	}
+	cand.Escrow, cand.EscrowMsgID, cand.EscrowMsgIDs = escrows(history, cand.KeyFingerprint)
 	cand.Foreign = d.classify(cand.KeyFingerprint, cand.UserID)
 	return cand, true, nil
 }
@@ -260,6 +265,35 @@ func markers(msgs []tgclient.HistoryMessage) []markerMessage {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].msgID < out[j].msgID })
 	return out
+}
+
+func escrows(msgs []tgclient.HistoryMessage, fingerprint string) (wire.Op, int64, []int64) {
+	var latest wire.Op
+	var latestID int64
+	var all []int64
+	for _, m := range msgs {
+		op, ok := textOp(m)
+		if !ok || op.Type != wire.OpKeyEscrow {
+			continue
+		}
+		all = append(all, m.MsgID)
+		if op.KEKFingerprint == fingerprint && m.MsgID > latestID {
+			latest, latestID = op, m.MsgID
+		}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	return latest, latestID, all
+}
+
+func (d *Discoverer) Inspect(ctx context.Context, peer tgclient.InputPeer) (Candidate, error) {
+	cand, ok, err := d.inspect(ctx, tgclient.Channel{Peer: peer})
+	if err != nil {
+		return Candidate{}, err
+	}
+	if !ok {
+		return Candidate{}, fmt.Errorf("%w: channel %d", ErrNotACandidate, peer.ChannelID)
+	}
+	return cand, nil
 }
 
 func acceptRevision(current, next wire.Op) bool {

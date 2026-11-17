@@ -91,6 +91,7 @@ type StorageStarterDependencies struct {
 	Sleeper     flow.Sleeper
 	Random      io.Reader
 	Logger      *slog.Logger
+	Embedded    *EmbeddedOptions
 }
 
 type reconcileOutcome int
@@ -345,6 +346,9 @@ func (s *StorageStarter) bringUp(ctx context.Context) error {
 	}
 	if !fileExists(s.deps.Data.Join(stateFileName)) {
 		s.setReport(RegistryAbsent, "")
+		if s.deps.Embedded != nil && s.deps.Embedded.NoRegistry {
+			return nil
+		}
 		if err := s.ensureRegistry(ctx); err != nil {
 			return err
 		}
@@ -358,7 +362,12 @@ func (s *StorageStarter) openAtBoot(ctx context.Context) error {
 	if s.currentRuntime() != nil {
 		return nil
 	}
-	return s.openLocked(ctx)
+	err := s.openLocked(ctx)
+	if errors.Is(err, ErrNotLinked) && s.deps.Embedded != nil && !s.deps.Embedded.NoRegistry {
+		s.deps.Logger.Info("project registry startup scheduled", "component", "lifecycle")
+		s.signal()
+	}
+	return err
 }
 
 func (s *StorageStarter) openLocked(ctx context.Context) error {
@@ -402,9 +411,16 @@ func (s *StorageStarter) ensureRegistry(ctx context.Context) error {
 		Database: database, Control: s.deps.Control, Projection: projection, Telegram: transport.Channels, Sender: transport.Sender,
 		Signals: transport.Signals, Ring: s.deps.Ring, PrimaryUserID: record.UserID, StatePath: s.deps.Data.Join(stateFileName),
 		Writer: writer, Terminal: adminTerminal{}, Clock: s.deps.Clock, Sleeper: s.deps.Sleeper, Random: s.deps.Random,
-		Logger: s.deps.Logger,
-	}, RegistryOptions{})
+		Logger: s.deps.Logger, ServerKeyFile: s.deps.Config.ServerKeyFile,
+	}, s.registryOptions())
 	return err
+}
+
+func (s *StorageStarter) registryOptions() RegistryOptions {
+	if s.deps.Embedded == nil {
+		return RegistryOptions{}
+	}
+	return s.deps.Embedded.Registry
 }
 
 func (s *StorageStarter) open(ctx context.Context) error {

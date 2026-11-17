@@ -20,9 +20,6 @@ import (
 
 const (
 	testServerID   = "k3v9m2q8t4w7x1z5a6b2c3d4e5"
-	testSetupToken = "bdst1_abcdefghijklmnopqrstuvwxyz234567"
-	testDeviceID   = "a1b2c3d4e5f6g7h2"
-	testDeviceTok  = "bdt1_a1b2c3d4e5f6g7h2_0123456789abcdefghijklmnopqrstuvwxyz0123456789ab"
 	testLoginCode  = "12345"
 	testAPIHash    = "0123456789abcdef0123456789abcdef"
 	testS3Endpoint = "https://s3.example.test"
@@ -39,20 +36,15 @@ type fakeAdmin struct {
 	t   *testing.T
 	now time.Time
 	srv *httptest.Server
-	pin string
 
 	mu           sync.Mutex
-	claimed      bool
 	linked       bool
 	telegram     adminv1.TelegramStatus
 	codeFailures int
-	revoked      bool
+	signedOut    bool
 	buckets      []adminv1.Bucket
-	keys         []adminv1.AccessKey
 	objects      map[string]storedObject
 	calls        map[string]int
-	tokensSeen   map[string]bool
-	lastPresign  adminv1.PresignRequest
 	putGate      chan struct{}
 	putStarted   chan struct{}
 	nextVersion  int
@@ -60,13 +52,8 @@ type fakeAdmin struct {
 
 type fakeAdminOption func(*fakeAdmin)
 
-func withClaimed() fakeAdminOption {
-	return func(f *fakeAdmin) { f.claimed = true }
-}
-
 func withLinked() fakeAdminOption {
 	return func(f *fakeAdmin) {
-		f.claimed = true
 		f.linked = true
 		f.telegram = linkedStatus(f.now)
 	}
@@ -91,25 +78,18 @@ func linkedStatus(now time.Time) adminv1.TelegramStatus {
 func newFakeAdmin(t *testing.T, now time.Time, opts ...fakeAdminOption) *fakeAdmin {
 	t.Helper()
 	f := &fakeAdmin{
-		t:          t,
-		now:        now,
-		objects:    map[string]storedObject{},
-		calls:      map[string]int{},
-		tokensSeen: map[string]bool{},
-		telegram:   adminv1.TelegramStatus{State: adminv1.TelegramNoCredentials, Next: adminv1.NextApp},
+		t:        t,
+		now:      now,
+		objects:  map[string]storedObject{},
+		calls:    map[string]int{},
+		telegram: adminv1.TelegramStatus{State: adminv1.TelegramNoCredentials, Next: adminv1.NextApp},
 	}
 	for _, opt := range opts {
 		opt(f)
 	}
-	f.srv = httptest.NewTLSServer(f.routes())
+	f.srv = httptest.NewServer(f.routes())
 	t.Cleanup(f.srv.Close)
-	sum := sha256.Sum256(f.srv.Certificate().RawSubjectPublicKeyInfo)
-	f.pin = "SHA256:" + hex.EncodeToString(sum[:])
 	return f
-}
-
-func (f *fakeAdmin) host() string {
-	return strings.TrimPrefix(f.srv.URL, "https://")
 }
 
 func (f *fakeAdmin) callCount(method, path string) int {
@@ -130,19 +110,16 @@ func (f *fakeAdmin) callsWithPrefix(method, prefix string) int {
 	return total
 }
 
-func (f *fakeAdmin) totalCalls() int {
+func (f *fakeAdmin) setSignedOut(out bool) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	total := 0
-	for _, n := range f.calls {
-		total += n
-	}
-	return total
+	f.signedOut = out
+	f.mu.Unlock()
 }
 
-func (f *fakeAdmin) setRevoked(revoked bool) {
+func (f *fakeAdmin) logout() {
 	f.mu.Lock()
-	f.revoked = revoked
+	f.linked = false
+	f.telegram = adminv1.TelegramStatus{State: adminv1.TelegramReady, Next: adminv1.NextPhone, Credentials: f.telegram.Credentials}
 	f.mu.Unlock()
 }
 
@@ -161,22 +138,6 @@ func (f *fakeAdmin) bucketNames() []string {
 		names = append(names, b.Name)
 	}
 	return names
-}
-
-func (f *fakeAdmin) keyIDs() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	ids := make([]string, 0, len(f.keys))
-	for _, k := range f.keys {
-		ids = append(ids, k.AccessKeyID)
-	}
-	return ids
-}
-
-func (f *fakeAdmin) tokenWasPresented(token string) bool {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.tokensSeen[token]
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -201,20 +162,12 @@ func (f *fakeAdmin) record(r *http.Request) {
 	f.calls[r.Method+" "+r.URL.Path]++
 }
 
-func (f *fakeAdmin) authorised(w http.ResponseWriter, r *http.Request) bool {
-	token := strings.TrimPrefix(r.Header.Get(adminv1.HeaderAuthorization), adminv1.BearerPrefix)
+func (f *fakeAdmin) authorised(w http.ResponseWriter) bool {
 	f.mu.Lock()
-	revoked := f.revoked
-	if token != "" {
-		f.tokensSeen[token] = true
-	}
+	out := f.signedOut
 	f.mu.Unlock()
-	if revoked {
-		writeAPIError(w, http.StatusForbidden, adminv1.CodeDeviceRevoked, "device revoked", map[string]any{"revoked_at": f.now.Format(time.RFC3339)})
-		return false
-	}
-	if token != testDeviceTok {
-		writeAPIError(w, http.StatusUnauthorized, adminv1.CodeUnauthenticated, "missing or invalid device token", nil)
+	if out {
+		writeAPIError(w, http.StatusUnauthorized, adminv1.CodeUnauthenticated, "telegram session ended", nil)
 		return false
 	}
 	return true
@@ -223,7 +176,7 @@ func (f *fakeAdmin) authorised(w http.ResponseWriter, r *http.Request) bool {
 func (f *fakeAdmin) authed(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
-		if f.authorised(w, r) {
+		if f.authorised(w) {
 			h(w, r)
 		}
 	}
@@ -238,14 +191,11 @@ func (f *fakeAdmin) open(h http.HandlerFunc) http.HandlerFunc {
 
 func (f *fakeAdmin) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+adminv1.PathServerInfo, f.open(f.serverInfo))
-	mux.HandleFunc("POST "+adminv1.PathSetupClaim, f.open(f.claim))
-	mux.HandleFunc("GET "+adminv1.PathDevices, f.authed(f.listDevices))
-	mux.HandleFunc("GET "+adminv1.PathSetupTelegram, f.authed(f.telegramStatus))
-	mux.HandleFunc("POST "+adminv1.PathSetupTelegramApp, f.authed(f.telegramSaveApp))
-	mux.HandleFunc("POST "+adminv1.PathSetupTelegramPhone, f.authed(f.telegramStart))
-	mux.HandleFunc("POST "+adminv1.PathSetupTelegramCode, f.authed(f.telegramCode))
-	mux.HandleFunc("POST "+adminv1.PathSetupTelegramCancel, f.authed(f.telegramStatus))
+	mux.HandleFunc("GET "+adminv1.PathSetupTelegram, f.open(f.telegramStatus))
+	mux.HandleFunc("POST "+adminv1.PathSetupTelegramApp, f.open(f.telegramSaveApp))
+	mux.HandleFunc("POST "+adminv1.PathSetupTelegramPhone, f.open(f.telegramStart))
+	mux.HandleFunc("POST "+adminv1.PathSetupTelegramCode, f.open(f.telegramCode))
+	mux.HandleFunc("POST "+adminv1.PathSetupTelegramCancel, f.open(f.telegramStatus))
 	mux.HandleFunc("GET "+adminv1.PathStatus, f.authed(f.status))
 	mux.HandleFunc("GET "+adminv1.PathUsage, f.authed(f.usage))
 	mux.HandleFunc("GET "+adminv1.PathBuckets, f.authed(f.listBuckets))
@@ -254,8 +204,6 @@ func (f *fakeAdmin) routes() http.Handler {
 	mux.HandleFunc("PATCH "+adminv1.PathBucket, f.authed(f.updateBucket))
 	mux.HandleFunc("DELETE "+adminv1.PathBucket, f.authed(f.deleteBucket))
 	mux.HandleFunc("GET "+adminv1.PathAccessKeys, f.authed(f.listKeys))
-	mux.HandleFunc("POST "+adminv1.PathAccessKeys, f.authed(f.createKey))
-	mux.HandleFunc("DELETE "+adminv1.PathAccessKey, f.authed(f.revokeKey))
 	mux.HandleFunc("GET "+adminv1.PathBucketObjects, f.authed(f.listObjects))
 	mux.HandleFunc("POST "+adminv1.PathBucketObjectsDelete, f.authed(f.deleteObjects))
 	mux.HandleFunc("PUT "+adminv1.PathBucketObject, f.authed(f.putObject))
@@ -263,74 +211,7 @@ func (f *fakeAdmin) routes() http.Handler {
 	mux.HandleFunc("GET "+adminv1.PathBucketObject, f.authed(f.getObject))
 	mux.HandleFunc("HEAD "+adminv1.PathBucketObject, f.authed(f.headObject))
 	mux.HandleFunc("GET "+adminv1.PathBucketObjectMeta, f.authed(f.objectMeta))
-	mux.HandleFunc("POST "+adminv1.PathBucketPresign, f.authed(f.presign))
 	return mux
-}
-
-func (f *fakeAdmin) serverInfo(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	info := adminv1.ServerInfo{
-		ServerID:       testServerID,
-		APIVersion:     "v1",
-		ServerVersion:  "0.1.0",
-		State:          "unclaimed",
-		TelegramLinked: f.linked,
-		PairingMethods: []string{},
-		TLS:            adminv1.TLSInfo{Mode: "self_signed", SPKISHA256: f.pin},
-		Time:           f.now,
-	}
-	if f.claimed {
-		info.State = "claimed"
-		info.PairingMethods = []string{"host"}
-	}
-	f.mu.Unlock()
-	writeJSON(w, http.StatusOK, info)
-}
-
-func (f *fakeAdmin) claim(w http.ResponseWriter, r *http.Request) {
-	var req adminv1.ClaimRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, adminv1.CodeBadRequest, "bad body", nil)
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.claimed {
-		writeAPIError(w, http.StatusConflict, adminv1.CodeAlreadyClaimed, "already claimed", nil)
-		return
-	}
-	if req.SetupToken != testSetupToken {
-		writeAPIError(w, http.StatusUnauthorized, adminv1.CodeSetupTokenInvalid, "setup token is not valid", nil)
-		return
-	}
-	f.claimed = true
-	writeJSON(w, http.StatusCreated, adminv1.DeviceCredentials{
-		Device: adminv1.Device{
-			DeviceID:      testDeviceID,
-			Name:          req.DeviceName,
-			Platform:      req.Platform,
-			CreatedAt:     f.now,
-			CreatedVia:    "setup_claim",
-			LastSeenAt:    f.now,
-			TokenIssuedAt: f.now,
-			Current:       true,
-		},
-		DeviceToken: testDeviceTok,
-		ServerID:    testServerID,
-	})
-}
-
-func (f *fakeAdmin) listDevices(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, adminv1.DeviceList{Devices: []adminv1.Device{{
-		DeviceID:      testDeviceID,
-		Name:          "Test laptop",
-		Platform:      "linux/amd64",
-		CreatedAt:     f.now,
-		CreatedVia:    "setup_claim",
-		LastSeenAt:    f.now,
-		TokenIssuedAt: f.now,
-		Current:       true,
-	}}})
 }
 
 func (f *fakeAdmin) telegramStatus(w http.ResponseWriter, r *http.Request) {
@@ -529,34 +410,6 @@ func (f *fakeAdmin) updateBucket(w http.ResponseWriter, r *http.Request) {
 	writeAPIError(w, http.StatusNotFound, adminv1.CodeBucketNotFound, "no such bucket", nil)
 }
 
-func (f *fakeAdmin) revokeKey(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue(adminv1.ParamAccessKeyID)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for i := range f.keys {
-		if f.keys[i].AccessKeyID != id {
-			continue
-		}
-		revoked := f.now
-		f.keys[i].Status = "revoked"
-		f.keys[i].RevokedAt = &revoked
-		writeJSON(w, http.StatusOK, f.keys[i])
-		return
-	}
-	writeAPIError(w, http.StatusNotFound, adminv1.CodeAccessKeyNotFound, "no such key", nil)
-}
-
-func (f *fakeAdmin) keyStatus(id string) string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, k := range f.keys {
-		if k.AccessKeyID == id {
-			return k.Status
-		}
-	}
-	return ""
-}
-
 func (f *fakeAdmin) bucketPolicy(name string) string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -589,34 +442,7 @@ func (f *fakeAdmin) deleteBucket(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeAdmin) listKeys(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	list := adminv1.AccessKeyList{AccessKeys: append([]adminv1.AccessKey{}, f.keys...)}
-	f.mu.Unlock()
-	writeJSON(w, http.StatusOK, list)
-}
-
-func (f *fakeAdmin) createKey(w http.ResponseWriter, r *http.Request) {
-	var req adminv1.CreateAccessKeyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, adminv1.CodeBadRequest, "bad body", nil)
-		return
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	key := adminv1.AccessKey{
-		AccessKeyID: "BDKEYAAAAAAAAAA" + strconv.Itoa(len(f.keys)),
-		Name:        req.Name,
-		CreatedAt:   f.now,
-		Status:      "active",
-		Scope:       req.Scope,
-	}
-	f.keys = append(f.keys, key)
-	writeJSON(w, http.StatusCreated, adminv1.AccessKeyCreated{
-		AccessKey:       key,
-		SecretAccessKey: "s3cr3t-shown-once-0123456789abcdefghijklmnop",
-		S3Endpoint:      testS3Endpoint,
-		S3Region:        "us-east-1",
-	})
+	writeJSON(w, http.StatusOK, adminv1.AccessKeyList{AccessKeys: []adminv1.AccessKey{}})
 }
 
 func (f *fakeAdmin) listObjects(w http.ResponseWriter, r *http.Request) {
@@ -796,40 +622,11 @@ func (f *fakeAdmin) deleteObjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (f *fakeAdmin) presign(w http.ResponseWriter, r *http.Request) {
-	var req adminv1.PresignRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeAPIError(w, http.StatusBadRequest, adminv1.CodeBadRequest, "bad body", nil)
-		return
-	}
-	bucket := r.PathValue(adminv1.ParamBucket)
-	f.mu.Lock()
-	f.lastPresign = req
-	f.mu.Unlock()
-	writeJSON(w, http.StatusOK, adminv1.PresignedURL{
-		URL:       testS3Endpoint + "/" + bucket + "/" + req.Key + "?X-Amz-Signature=canned",
-		Method:    http.MethodGet,
-		ExpiresAt: f.now.Add(time.Duration(req.ExpiresInSeconds) * time.Second),
-	})
-}
-
 func (f *fakeAdmin) seedBucket(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.buckets = append(f.buckets, adminv1.Bucket{
 		Name: name, CreatedAt: f.now, Policy: "private", EncryptionDefault: "none",
 		CacheMaxAgeSeconds: 3600, TelegramChannelID: int64(1000 + len(f.buckets)),
-	})
-}
-
-func (f *fakeAdmin) seedKey(name string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.keys = append(f.keys, adminv1.AccessKey{
-		AccessKeyID: "BDKEYAAAAAAAAAA" + strconv.Itoa(len(f.keys)),
-		Name:        name,
-		CreatedAt:   f.now,
-		Status:      "active",
-		Scope:       adminv1.Scope{Buckets: []string{"*"}, Actions: []string{"read", "list"}},
 	})
 }

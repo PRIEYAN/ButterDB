@@ -22,43 +22,12 @@ import (
 var testNow = time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)
 
 type fakeClient struct {
-	mu          sync.Mutex
-	revokeErrs  []error
-	revokeCalls []bool
-	unlinks     int
-	audits      []adminv1.AuditQuery
+	mu     sync.Mutex
+	audits []adminv1.AuditQuery
 }
 
-func (f *fakeClient) ServerInfo(context.Context) (adminv1.ServerInfo, error) {
-	return adminv1.ServerInfo{ServerVersion: "0.9.0", State: "claimed"}, nil
-}
-
-func (f *fakeClient) ListDevices(context.Context) (adminv1.DeviceList, error) {
-	revoked := testNow.Add(-time.Hour)
-	return adminv1.DeviceList{Devices: []adminv1.Device{
-		{DeviceID: "self", Name: "Office laptop", Platform: "linux/amd64", CreatedVia: "setup", Current: true, LastSeenAt: testNow.Add(-2 * time.Minute), LastSeenIP: "203.0.113.7"},
-		{DeviceID: "old", Name: "Old phone", RevokedAt: &revoked},
-	}}, nil
-}
-
-func (f *fakeClient) RenameDevice(_ context.Context, id string, req adminv1.UpdateDeviceRequest) (adminv1.Device, error) {
-	return adminv1.Device{DeviceID: id, Name: req.Name, Current: true}, nil
-}
-
-func (f *fakeClient) RevokeDevice(_ context.Context, _ string, confirmLast bool) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.revokeCalls = append(f.revokeCalls, confirmLast)
-	if len(f.revokeErrs) == 0 {
-		return nil
-	}
-	err := f.revokeErrs[0]
-	f.revokeErrs = f.revokeErrs[1:]
-	return err
-}
-
-func (f *fakeClient) RotateDeviceToken(context.Context) (adminv1.DeviceCredentials, error) {
-	return adminv1.DeviceCredentials{DeviceToken: "new"}, nil
+func (f *fakeClient) Status(context.Context) (adminv1.Status, error) {
+	return adminv1.Status{ServerVersion: "0.9.0"}, nil
 }
 
 func (f *fakeClient) TelegramStatus(context.Context) (adminv1.TelegramStatus, error) {
@@ -66,13 +35,6 @@ func (f *fakeClient) TelegramStatus(context.Context) (adminv1.TelegramStatus, er
 		State:   adminv1.TelegramLinked,
 		Account: &adminv1.TelegramAccount{FirstName: "Ada", Username: "ada", PhoneMasked: "+49 *** 12", Connected: true, LinkedAt: testNow.Add(-72 * time.Hour)},
 	}, nil
-}
-
-func (f *fakeClient) UnlinkTelegram(context.Context) (adminv1.TelegramStatus, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.unlinks++
-	return adminv1.TelegramStatus{State: adminv1.TelegramReady}, nil
 }
 
 func (f *fakeClient) Audit(_ context.Context, q adminv1.AuditQuery) (adminv1.AuditPage, error) {
@@ -83,6 +45,40 @@ func (f *fakeClient) Audit(_ context.Context, q adminv1.AuditQuery) (adminv1.Aud
 		Events:     []adminv1.AuditEvent{{ID: 1, At: testNow, Actor: adminv1.AuditActor{Type: "device", DeviceName: "Office laptop"}, Action: "bucket.create", Target: "photos", Outcome: "success", RemoteAddr: "203.0.113.7"}},
 		NextCursor: "next",
 	}, nil
+}
+
+type fakeAccount struct {
+	mu      sync.Mutex
+	removes int
+	renames []string
+}
+
+func (a *fakeAccount) Current() (vm.Project, bool) {
+	return vm.Project{ID: "p1", Name: "photos", LiveBuckets: 3}, true
+}
+
+func (a *fakeAccount) Rename(_ context.Context, _ vm.ProjectID, name string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.renames = append(a.renames, name)
+	return nil
+}
+
+func (a *fakeAccount) ChangePassword(context.Context, vm.ProjectID, []byte, []byte) error {
+	return nil
+}
+
+func (a *fakeAccount) ResetKey(context.Context, vm.ProjectID, []byte, string) (vm.ResetReport, error) {
+	return vm.ResetReport{UnreadableObjects: map[string]int64{"backups": 4}, RevokedAccessKeys: 2}, nil
+}
+
+func (a *fakeAccount) Logout(context.Context) error { return nil }
+
+func (a *fakeAccount) RemoveDevice(context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.removes++
+	return nil
 }
 
 type fakeNav struct {
@@ -116,12 +112,6 @@ func (n *fakeNav) routes() []model.Route {
 	return append([]model.Route(nil), n.navigated...)
 }
 
-func (n *fakeNav) reasonFor(r model.Route) string {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	return n.disabled[r]
-}
-
 type fakeNotifier struct {
 	problems []model.Problem
 	infos    []string
@@ -136,27 +126,6 @@ type fakeClipboard struct{ text string }
 
 func (c *fakeClipboard) SetText(text string) { c.text = text }
 func (c *fakeClipboard) Text() string        { return c.text }
-
-type memTokens struct{ tokens map[string]string }
-
-func (m *memTokens) Get(id string) (string, error) {
-	if t, ok := m.tokens[id]; ok {
-		return t, nil
-	}
-	return "", model.ErrTokenNotFound
-}
-func (m *memTokens) Set(id, token string) error { m.tokens[id] = token; return nil }
-func (m *memTokens) Delete(id string) error     { delete(m.tokens, id); return nil }
-func (m *memTokens) Kind() model.TokenStorage   { return model.TokenFile }
-
-type memProfiles struct{ profile model.Profile }
-
-func (m *memProfiles) List() ([]model.Profile, error)    { return nil, nil }
-func (m *memProfiles) Get(string) (model.Profile, error) { return m.profile, nil }
-func (m *memProfiles) Put(p model.Profile) error         { m.profile = p; return nil }
-func (m *memProfiles) Delete(string) error               { m.profile = model.Profile{}; return nil }
-func (m *memProfiles) LastUsed() (string, error)         { return "", nil }
-func (m *memProfiles) SetLastUsed(string) error          { return nil }
 
 type memPrefs struct {
 	strings map[string]string
@@ -182,11 +151,10 @@ type rig struct {
 	screen  *Screen
 	vm      *vm.ViewModel
 	client  *fakeClient
+	account *fakeAccount
 	nav     *fakeNav
 	notif   *fakeNotifier
 	prefs   *memPrefs
-	profile *memProfiles
-	tokens  *memTokens
 	win     fyne.Window
 	queue   *uiQueue
 }
@@ -194,30 +162,19 @@ type rig struct {
 func newRig(t *testing.T, withNotifier bool) *rig {
 	t.Helper()
 	test.NewTempApp(t)
-	profile := model.Profile{
-		ServerID: "srv", Label: "home server", BaseURL: "https://203.0.113.10:9443",
-		Trust:    adminv1.Trust{Mode: adminv1.TrustPinned, SPKISHA256: "SHA256:" + strings.Repeat("ab12", 16)},
-		DeviceID: "self", DeviceName: "Office laptop", TokenStorage: model.TokenFile,
-		TokenIssuedAt: testNow.Add(-48 * time.Hour),
-	}
 	r := &rig{
 		client:  &fakeClient{},
+		account: &fakeAccount{},
 		nav:     &fakeNav{},
 		notif:   &fakeNotifier{},
 		prefs:   &memPrefs{strings: map[string]string{}, ints: map[string]int{}},
-		profile: &memProfiles{profile: profile},
-		tokens:  &memTokens{tokens: map[string]string{"srv": "tok"}},
 	}
 	r.vm = vm.New(r.client, func() time.Time { return testNow }, vm.Session{
-		Profile: profile, Tokens: r.tokens, Profiles: r.profile, Preferences: r.prefs, AppVersion: "0.1.0", DefaultDownloadDir: "/home/me/Downloads",
+		Account: r.account, Preferences: r.prefs, AppVersion: "0.1.0", DefaultDownloadDir: "/home/me/Downloads",
 	})
 	r.win = test.NewTempWindow(t, widget.NewLabel("placeholder"))
-	var n *fakeNotifier
 	if withNotifier {
-		n = r.notif
-	}
-	if n != nil {
-		r.screen = NewScreen(r.vm, r.nav, n, &fakeClipboard{}, r.win)
+		r.screen = NewScreen(r.vm, r.nav, r.notif, &fakeClipboard{}, r.win)
 	} else {
 		r.screen = NewScreen(r.vm, r.nav, nil, &fakeClipboard{}, r.win)
 	}
@@ -328,30 +285,6 @@ func TestScreenIdentity(t *testing.T) {
 	}
 }
 
-func TestRendersEverySection(t *testing.T) {
-	r := newRig(t, false)
-	r.vm.Refresh(context.Background())
-	text := visibleTexts(r.screen.view.root)
-	for _, step := range []string{stepDevices, stepTelegram, stepAbout, stepPreferences, stepConnection} {
-		r.screen.view.showStep(step, true)
-		text += "\n" + visibleTexts(r.screen.view.root)
-	}
-	for _, want := range []string{
-		"https://203.0.113.10:9443", "0.9.0", "Pinned certificate key", "ab12 ab12 ab12 ab12", "Protected file",
-		"Office laptop (This device)", "linux/amd64", "203.0.113.7", "revoked at 2026-11-16 08:30", "Revoke…",
-		"Ada", "@ada", "+49 *** 12", "Unlink…", safetyNotice,
-		"Fyne", "BSD-3-Clause", "go-keyring", "MIT", "0.1.0",
-		"Theme", "Upload concurrency (1 to 4)",
-	} {
-		if !strings.Contains(text, want) {
-			t.Errorf("rendered text lacks %q", want)
-		}
-	}
-	if strings.Contains(text, "Revoke…\nRevoke…\nRevoke…") {
-		t.Errorf("revoked device must not offer revoke")
-	}
-}
-
 func TestShowSelectsStepFromParams(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -359,8 +292,8 @@ func TestShowSelectsStepFromParams(t *testing.T) {
 		want   string
 	}{
 		{"f1 opens about", model.Params{model.ParamStep: "about"}, stepAbout},
-		{"unknown step is ignored", model.Params{model.ParamStep: "nope"}, stepConnection},
-		{"no step keeps the first section", nil, stepConnection},
+		{"unknown step is ignored", model.Params{model.ParamStep: "nope"}, stepProject},
+		{"no step keeps the first section", nil, stepProject},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -378,157 +311,10 @@ func TestShowSelectsStepFromParams(t *testing.T) {
 	}
 }
 
-func TestShowRefreshesInBackground(t *testing.T) {
-	r := newRig(t, false)
-	r.queueUI()
-	loaded := make(chan struct{}, 4)
-	cancel := r.vm.State().Subscribe(func(s vm.State) {
-		if !s.Loading && s.Devices.Loaded && s.Telegram.Loaded {
-			select {
-			case loaded <- struct{}{}:
-			default:
-			}
-		}
-	})
-	defer cancel()
-	r.screen.Show(context.Background(), model.Params{model.ParamStep: "devices"})
-	select {
-	case <-loaded:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("Show did not load data")
-	}
-	r.queue.drain()
-	if !strings.Contains(visibleTexts(r.screen.view.root), "Office laptop (This device)") {
-		t.Fatalf("devices not rendered")
-	}
-}
-
-func TestUnlinkButtonOnlyWhenLinked(t *testing.T) {
-	r := newRig(t, false)
-	button := findButton(r.screen.view.root, "Unlink…")
-	if button == nil || !button.Disabled() {
-		t.Fatalf("unlink must start disabled")
-	}
-	r.vm.RefreshTelegram(context.Background())
-	if button.Disabled() {
-		t.Fatalf("unlink must enable once linked")
-	}
-}
-
-func TestUnlinkRequiresTypedWordInDialog(t *testing.T) {
-	r := newRig(t, false)
-	r.vm.RefreshTelegram(context.Background())
-	r.queueUI()
-	test.Tap(findButton(r.screen.view.root, "Unlink…"))
-	focused, ok := r.win.Canvas().Focused().(fyne.Focusable)
-	if !ok {
-		t.Fatalf("typed confirmation entry is not focused")
-	}
-	confirm := overlayConfirm(r.win)
-	if confirm == nil || confirm.Disabled() == false {
-		t.Fatalf("confirm button must be disabled until the word is typed")
-	}
-	test.Type(focused, "unlin")
-	if !confirm.Disabled() {
-		t.Fatalf("partial word must not enable confirm")
-	}
-	test.Type(focused, "k")
-	if confirm.Disabled() {
-		t.Fatalf("exact word must enable confirm")
-	}
-	test.Tap(confirm)
-	r.waitFor(t, func() bool {
-		r.client.mu.Lock()
-		defer r.client.mu.Unlock()
-		return r.client.unlinks == 1
-	})
-	r.waitFor(t, func() bool { return len(r.nav.routes()) == 1 })
-	if r.nav.routes()[0] != model.RouteTelegram {
-		t.Fatalf("navigated = %v", r.nav.routes())
-	}
-	for _, route := range gatedRoutes() {
-		if r.nav.reasonFor(route) != "Link Telegram first" {
-			t.Fatalf("route %q not gated: %v", route, r.nav.disabled)
-		}
-	}
-}
-
-func walkOverlay(o fyne.CanvasObject, fn func(fyne.CanvasObject)) {
-	walk(o, fn)
-}
-
-type confirmButton interface {
-	fyne.Tappable
-	fyne.Disableable
-}
-
-func overlayConfirm(win fyne.Window) confirmButton {
-	top := win.Canvas().Overlays().Top()
-	if top == nil {
-		return nil
-	}
-	var last confirmButton
-	walkOverlay(top, func(co fyne.CanvasObject) {
-		if b, ok := co.(confirmButton); ok {
-			last = b
-		}
-	})
-	return last
-}
-
-func TestRevokeSelfFlowRoutesToConnect(t *testing.T) {
-	r := newRig(t, false)
-	r.vm.RefreshDevices(context.Background())
-	r.screen.view.showStep(stepDevices, true)
-	r.queueUI()
-	test.Tap(findButton(r.screen.view.root, "Revoke…"))
-	confirm := overlayConfirm(r.win)
-	if confirm == nil {
-		t.Fatalf("no confirm dialog")
-	}
-	test.Tap(confirm)
-	r.waitFor(t, func() bool { return len(r.nav.routes()) == 1 })
-	if r.nav.routes()[0] != model.RouteConnect {
-		t.Fatalf("navigated = %v", r.nav.routes())
-	}
-	if _, err := r.tokens.Get("srv"); err == nil {
-		t.Fatalf("token kept after revoking this device")
-	}
-}
-
-func TestRevokeLastDeviceAsksAgainInView(t *testing.T) {
-	r := newRig(t, false)
-	r.client.revokeErrs = []error{&adminv1.APIError{Status: 409, Body: adminv1.ErrorBody{Code: adminv1.CodeLastDevice}}}
-	r.vm.RefreshDevices(context.Background())
-	r.screen.view.showStep(stepDevices, true)
-	r.queueUI()
-	test.Tap(findButton(r.screen.view.root, "Revoke…"))
-	first := overlayConfirm(r.win)
-	test.Tap(first)
-	var second confirmButton
-	r.waitFor(t, func() bool {
-		top := r.win.Canvas().Overlays().Top()
-		if top == nil {
-			return false
-		}
-		second = overlayConfirm(r.win)
-		return second != nil && second != first
-	})
-	test.Tap(second)
-	r.waitFor(t, func() bool {
-		r.client.mu.Lock()
-		defer r.client.mu.Unlock()
-		return len(r.client.revokeCalls) == 2
-	})
-	if r.client.revokeCalls[0] || !r.client.revokeCalls[1] {
-		t.Fatalf("confirm_last flags = %v", r.client.revokeCalls)
-	}
-}
-
 func TestPreferencesPersistThroughControls(t *testing.T) {
 	r := newRig(t, false)
 	r.screen.view.showStep(stepPreferences, true)
-	prefs := r.screen.view.entries[6].panel.(*preferencesPanel)
+	prefs := r.screen.view.entries[4].panel.(*preferencesPanel)
 	prefs.theme.SetSelected(vm.ThemeDark)
 	if r.prefs.strings[vm.PrefTheme] != vm.ThemeDark {
 		t.Fatalf("theme pref = %q", r.prefs.strings[vm.PrefTheme])
@@ -561,7 +347,7 @@ func TestActivityFilterSendsPrefix(t *testing.T) {
 	r := newRig(t, false)
 	r.screen.view.showStep(stepActivity, true)
 	r.queueUI()
-	panel := r.screen.view.entries[4].panel.(*activityPanel)
+	panel := r.screen.view.entries[2].panel.(*activityPanel)
 	loaded := make(chan struct{}, 4)
 	cancel := r.vm.State().Subscribe(func(s vm.State) {
 		if !s.Loading && s.Activity.Loaded {
@@ -587,26 +373,6 @@ func TestActivityFilterSendsPrefix(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("activity lacks %q", want)
 		}
-	}
-}
-
-func TestProblemsGoThroughNotifier(t *testing.T) {
-	r := newRig(t, true)
-	r.vm.Unlink(context.Background(), "wrong")
-	if len(r.notif.problems) != 0 {
-		t.Fatalf("unconfirmed unlink must not raise a problem")
-	}
-	r.vm.RenameServer("")
-	if len(r.notif.problems) != 0 {
-		t.Fatalf("inline problem must stay inline: %+v", r.notif.problems)
-	}
-	if !strings.Contains(visibleTexts(r.screen.view.root), "names are 1 to 64 characters") {
-		t.Fatalf("inline strip missing")
-	}
-	r.vm.SetTheme(vm.ThemeDark)
-	r.vm.RotateToken(context.Background())
-	if len(r.notif.infos) != 1 || r.notif.infos[0] != vm.NoticeTokenRotated {
-		t.Fatalf("infos = %v", r.notif.infos)
 	}
 }
 
@@ -650,7 +416,75 @@ func TestNewViewWithoutNotifierFindsWindow(t *testing.T) {
 	if win == nil {
 		t.Fatalf("no window")
 	}
-	if got := visibleTexts(content); !strings.Contains(got, "Connection") {
+	if got := visibleTexts(content); !strings.Contains(got, "Project") {
 		t.Fatalf("content = %q", got)
 	}
+}
+
+func TestRendersEverySection(t *testing.T) {
+	r := newRig(t, false)
+	r.vm.Refresh(context.Background())
+	text := visibleTexts(r.screen.view.root)
+	for _, step := range []string{stepTelegram, stepAbout, stepPreferences, stepProject} {
+		r.screen.view.showStep(step, true)
+		text += "\n" + visibleTexts(r.screen.view.root)
+	}
+	for _, want := range []string{
+		"Project ID", "p1", "Rename project", "Change project password", "Reset project key", "Switch project",
+		"Ada", "@ada", "+49 *** 12", "Log out of Telegram", "Remove this account from this device…", safetyNotice,
+		"Fyne", "BSD-3-Clause", "0.1.0", "0.9.0",
+		"Theme", "Upload concurrency (1 to 4)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("rendered text lacks %q", want)
+		}
+	}
+}
+
+func TestRemoveDeviceAsksFirstThenRoutesToTelegram(t *testing.T) {
+	r := newRig(t, false)
+	r.screen.view.showStep(stepTelegram, true)
+	r.queueUI()
+	test.Tap(findButton(r.screen.view.root, "Remove this account from this device…"))
+	confirm := overlayConfirm(r.win)
+	if confirm == nil {
+		t.Fatalf("no confirmation dialog")
+	}
+	r.account.mu.Lock()
+	early := r.account.removes
+	r.account.mu.Unlock()
+	if early != 0 {
+		t.Fatalf("device removed before confirming")
+	}
+	test.Tap(confirm)
+	r.waitFor(t, func() bool { return len(r.nav.routes()) == 1 })
+	if r.nav.routes()[0] != model.RouteTelegram {
+		t.Fatalf("navigated = %v", r.nav.routes())
+	}
+	if r.account.removes != 1 {
+		t.Fatalf("removes = %d", r.account.removes)
+	}
+}
+
+func walkOverlay(o fyne.CanvasObject, fn func(fyne.CanvasObject)) {
+	walk(o, fn)
+}
+
+type confirmButton interface {
+	fyne.Tappable
+	fyne.Disableable
+}
+
+func overlayConfirm(win fyne.Window) confirmButton {
+	top := win.Canvas().Overlays().Top()
+	if top == nil {
+		return nil
+	}
+	var last confirmButton
+	walkOverlay(top, func(co fyne.CanvasObject) {
+		if b, ok := co.(confirmButton); ok {
+			last = b
+		}
+	})
+	return last
 }

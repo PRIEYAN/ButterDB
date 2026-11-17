@@ -16,6 +16,8 @@ func parserFor(t OpType) func(headerFields) (Op, error) {
 		return parseBucketDelete
 	case OpEncConfig:
 		return parseEncConfig
+	case OpKeyEscrow:
+		return parseKeyEscrow
 	}
 	return nil
 }
@@ -36,6 +38,8 @@ func formatterFor(t OpType) func(Op) (string, error) {
 		return formatBucketDelete
 	case OpEncConfig:
 		return formatEncConfig
+	case OpKeyEscrow:
+		return formatKeyEscrow
 	}
 	return nil
 }

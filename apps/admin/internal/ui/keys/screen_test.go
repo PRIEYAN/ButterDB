@@ -546,13 +546,13 @@ func TestShortcutModNOpensCreateForm(t *testing.T) {
 	}
 }
 
-func TestUnauthenticatedRoutesToConnect(t *testing.T) {
+func TestUnauthenticatedRoutesToTelegram(t *testing.T) {
 	client := sampleKeys()
 	client.createErr = &adminv1.APIError{Status: http.StatusUnauthorized, Body: adminv1.ErrorBody{Code: adminv1.CodeUnauthenticated}}
 	f := newFixture(t, client)
 	f.show()
 	createKey(t, f)
-	if len(f.nav.routes) != 1 || f.nav.routes[0] != model.RouteConnect {
+	if len(f.nav.routes) != 1 || f.nav.routes[0] != model.RouteTelegram {
 		t.Fatalf("routes = %v", f.nav.routes)
 	}
 }

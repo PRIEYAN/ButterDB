@@ -19,12 +19,12 @@ const (
 	minWindowWidth  = 1024
 	minWindowHeight = 680
 	closeLabel      = "Close"
-	labelOffline    = "Offline"
-	labelConnected  = "Connected"
+	labelNoProject  = "No project open"
+	labelOpen       = "Project open"
+	telegramKicker  = "admin / telegram"
 )
 
 var sidebarOrder = []model.Route{
-	model.RouteTelegram,
 	model.RouteDashboard,
 	model.RouteBuckets,
 	model.RouteKeys,
@@ -39,13 +39,18 @@ type Shell struct {
 	clip model.Clipboard
 	now  func() time.Time
 
-	sidebar   *sidebar
-	banner    *banner
-	frame     *fyne.Container
-	content   *fyne.Container
-	serverTxt *widget.Label
-	linkTxt   *widget.Label
-	linkIcon  *widget.Icon
+	sidebar    *sidebar
+	brand      fyne.CanvasObject
+	center     *fyne.Container
+	main       *fyne.Container
+	split      fyne.CanvasObject
+	pageHeader fyne.CanvasObject
+	banner     *banner
+	frame      *fyne.Container
+	content    *fyne.Container
+	serverTxt  *widget.Label
+	linkTxt    *widget.Label
+	linkIcon   *widget.Icon
 
 	mu            sync.Mutex
 	screens       map[model.Route]Screen
@@ -70,22 +75,33 @@ func New(app fyne.App, win fyne.Window) *Shell {
 	}
 	s.build()
 	s.registerShellShortcuts()
-	s.SetServerLabel("", false)
+	s.SetProjectLabel("")
+	s.showSidebar(false)
 	return s
 }
 
+func fullScreen(r model.Route) bool {
+	return r == model.RouteTelegram || r == model.RouteProjects
+}
+
 func (s *Shell) build() {
-	s.sidebar = newSidebar(func(r model.Route) { s.navigate(r, nil) }, s.switchServer)
+	s.sidebar = newSidebar(func(r model.Route) { s.navigate(r, nil) }, s.switchProject)
 	s.banner = newBanner(s.clip, func() time.Time { return s.now() }, s.refreshCurrent)
 	s.content = container.NewStack()
 	s.serverTxt = NewMono("")
-	s.linkTxt = NewMono(labelOffline)
+	s.linkTxt = NewMono(labelNoProject)
 	s.linkIcon = widget.NewIcon(theme.NewErrorThemedResource(theme.CancelIcon()))
 	status := container.NewHBox(s.linkIcon, s.linkTxt, widget.NewSeparator(), s.serverTxt)
 	statusLine := container.NewVBox(widget.NewSeparator(), Inset(0, contentMargin, 0, gridUnit, status))
 	minimum := FixedSpace(minWindowWidth, minWindowHeight)
 	main := PageMargins(container.NewBorder(s.banner.object(), nil, nil, nil, s.content))
-	s.frame = container.NewBorder(nil, statusLine, s.sidebar.root, nil, main)
+	s.brand = newBrandPanel()
+	s.main = main
+	s.split = newSplitView(s.brand, main)
+	s.center = container.NewStack(main)
+	s.pageHeader = Inset(contentMargin, contentMargin, 0, contentMargin, NewKicker(telegramKicker))
+	s.pageHeader.Hide()
+	s.frame = container.NewBorder(s.pageHeader, statusLine, s.sidebar.root, nil, s.center)
 	s.win.SetContent(container.NewStack(minimum, s.frame))
 }
 
@@ -95,7 +111,7 @@ func (s *Shell) registerShellShortcuts() {
 		s.refreshCurrent()
 	})
 	cv.AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyW, Modifier: fyne.KeyModifierShortcutDefault}, func(fyne.Shortcut) {
-		s.switchServer()
+		s.switchProject()
 	})
 	cv.AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyQ, Modifier: fyne.KeyModifierShortcutDefault}, func(fyne.Shortcut) {
 		s.app.Quit()
@@ -149,20 +165,18 @@ func (s *Shell) Window() fyne.Window {
 	return s.win
 }
 
-func (s *Shell) SetServerLabel(label string, connected bool) {
-	s.serverTxt.SetText(label)
-	if label == "" {
+func (s *Shell) SetProjectLabel(name string) {
+	s.serverTxt.SetText(name)
+	s.sidebar.setProject(name)
+	if name == "" {
 		s.win.SetTitle(windowTitle)
-	} else {
-		s.win.SetTitle(windowTitle + " — " + label)
-	}
-	if connected {
-		s.linkTxt.SetText(labelConnected)
-		s.linkIcon.SetResource(theme.NewSuccessThemedResource(theme.ConfirmIcon()))
+		s.linkTxt.SetText(labelNoProject)
+		s.linkIcon.SetResource(theme.NewErrorThemedResource(theme.CancelIcon()))
 		return
 	}
-	s.linkTxt.SetText(labelOffline)
-	s.linkIcon.SetResource(theme.NewErrorThemedResource(theme.CancelIcon()))
+	s.win.SetTitle(windowTitle + " — " + name)
+	s.linkTxt.SetText(labelOpen)
+	s.linkIcon.SetResource(theme.NewSuccessThemedResource(theme.ConfirmIcon()))
 }
 
 func (s *Shell) Reset() {
@@ -180,18 +194,31 @@ func (s *Shell) Reset() {
 		s.bindShortcut(route, "")
 	}
 	s.banner.clear()
-	s.showSidebar(true)
+	s.showSidebar(false)
 	s.content.Objects = nil
 	s.content.Refresh()
 	s.refreshSidebar()
-	s.SetServerLabel("", false)
+	s.SetProjectLabel("")
 }
 
 func (s *Shell) showSidebar(visible bool) {
-	if s.sidebar.root.Visible() == visible {
-		return
+	topMargin := contentMargin
+	if s.currentRoute() == model.RouteTelegram {
+		s.pageHeader.Show()
+		topMargin = 0
+	} else {
+		s.pageHeader.Hide()
 	}
-	s.sidebar.show(visible)
+	s.main.Layout = insetLayout{top: topMargin, right: contentMargin, bottom: contentMargin, left: contentMargin}
+	if s.sidebar.root.Visible() != visible {
+		s.sidebar.show(visible)
+	}
+	if visible {
+		s.center.Objects = []fyne.CanvasObject{s.main}
+	} else {
+		s.center.Objects = []fyne.CanvasObject{s.split}
+	}
+	s.center.Refresh()
 	s.frame.Refresh()
 }
 
@@ -217,7 +244,7 @@ func (s *Shell) navigate(r model.Route, p model.Params) {
 	s.banner.clear()
 	s.content.Objects = []fyne.CanvasObject{sc.Content()}
 	s.content.Refresh()
-	s.showSidebar(r != model.RouteConnect)
+	s.showSidebar(!fullScreen(r))
 	s.sidebar.markCurrent(r)
 	sc.Show(ctx, p)
 }
@@ -245,8 +272,8 @@ func (s *Shell) refreshCurrent() {
 	s.navigate(route, params)
 }
 
-func (s *Shell) switchServer() {
-	s.navigate(model.RouteConnect, nil)
+func (s *Shell) switchProject() {
+	s.navigate(model.RouteProjects, nil)
 }
 
 func (s *Shell) setEnabled(r model.Route, enabled bool, reason string) {
@@ -282,7 +309,7 @@ func (s *Shell) orderedRoutes() []model.Route {
 		}
 	}
 	for _, route := range s.order {
-		if route != model.RouteConnect && !seen[route] {
+		if !fullScreen(route) && !seen[route] {
 			routes = append(routes, route)
 		}
 	}

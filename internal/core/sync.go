@@ -27,21 +27,22 @@ import (
 const registryChannelTitle = "butterDB registry"
 
 type SyncDependencies struct {
-	Database     *sqlitedb.DB
-	Control      *sqlitedb.DB
-	Projection   *Projection
-	Telegram     tgclient.ChannelRPC
-	Sender       tgclient.Sender
-	Signals      livesync.SignalSource
-	Ring         *keyring.Ring
-	State        buckets.RegistryStateStore
-	ActorUserID  int64
-	DeploymentID string
-	LiveSync     livesync.Config
-	Clock        clock.Clock
-	Sleeper      flow.Sleeper
-	Random       io.Reader
-	Logger       *slog.Logger
+	Database      *sqlitedb.DB
+	Control       *sqlitedb.DB
+	Projection    *Projection
+	Telegram      tgclient.ChannelRPC
+	Sender        tgclient.Sender
+	Signals       livesync.SignalSource
+	Ring          *keyring.Ring
+	State         buckets.RegistryStateStore
+	ActorUserID   int64
+	DeploymentID  string
+	RegistryTitle string
+	LiveSync      livesync.Config
+	Clock         clock.Clock
+	Sleeper       flow.Sleeper
+	Random        io.Reader
+	Logger        *slog.Logger
 }
 
 type Sync struct {
@@ -208,6 +209,7 @@ func (s *Sync) assembleBuckets(deps SyncDependencies, stores *channelStores) err
 		Creator:        deps.Telegram,
 		DeploymentID:   deps.DeploymentID,
 		KeyFingerprint: deps.Ring.FingerprintString(),
+		Title:          deps.RegistryTitle,
 	})
 	if err != nil {
 		return fmt.Errorf("core: sync: registry provisioner: %w", err)

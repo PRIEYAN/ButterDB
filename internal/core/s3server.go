@@ -38,7 +38,7 @@ func newS3Server(cfg config.S3Config, handler http.Handler, logger *slog.Logger)
 func (s *s3Server) Start(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.server != nil {
+	if s.server != nil || s.cfg.Listen == "" {
 		return nil
 	}
 	var listenConfig net.ListenConfig

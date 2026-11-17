@@ -7,7 +7,6 @@ const (
 	PrefDownloadDir           = "download_dir"
 	PrefUploadConcurrency     = "upload_concurrency"
 	PrefClipboardClearSeconds = "clipboard_clear_seconds"
-	prefLastRoutePrefix       = "last_route."
 
 	ThemeSystem = "system"
 	ThemeLight  = "light"
@@ -24,10 +23,6 @@ type PreferencesState struct {
 	DownloadDir           string
 	UploadConcurrency     int
 	ClipboardClearSeconds int
-}
-
-func LastRouteKey(serverID string) string {
-	return prefLastRoutePrefix + serverID
 }
 
 func ThemeModes() []string {

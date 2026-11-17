@@ -13,38 +13,45 @@ import (
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
-	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect"
-	connectvm "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect/vm"
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/projects"
+	projectsvm "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/projects/vm"
 	settingsui "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings"
 	settingsvm "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings/vm"
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/telegramlink"
+	telegramvm "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/telegramlink/vm"
+	"github.com/PRIEYAN/ButterDB/internal/embedded"
 )
 
 const (
-	reasonLinkFirst = "Link Telegram first"
-	jsonTimeout     = 75 * time.Second
+	jsonTimeout  = 75 * time.Second
+	closeTimeout = 30 * time.Second
 )
 
 type session struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
-	profile model.Profile
+	project embedded.Project
 	api     *guardedClient
 	models  sessionModels
 	handled atomic.Bool
 }
 
 type composition struct {
-	app       fyne.App
-	win       *closeGuardWindow
-	sh        *shell.Shell
-	opts      Options
-	clip      model.Clipboard
-	prefs     fyne.Preferences
-	ctx       context.Context
-	cancel    context.CancelFunc
-	connectVM *connectvm.ViewModel
-	gate      shell.Screen
-	loop      *loopGate
+	app    fyne.App
+	win    *closeGuardWindow
+	sh     *shell.Shell
+	opts   Options
+	clip   model.Clipboard
+	prefs  fyne.Preferences
+	ctx    context.Context
+	cancel context.CancelFunc
+	loop   *loopGate
+	api    *adminv1.Client
+
+	telegram   *telegramvm.ViewModel
+	projectsVM *projectsvm.ViewModel
+	gates      []shell.Screen
+	closing    atomic.Int32
 
 	mu   sync.Mutex
 	sess *session
@@ -71,6 +78,15 @@ func compose(a fyne.App, w fyne.Window, opts Options, afterLoopStarts func(func(
 	if err := opts.validate(); err != nil {
 		return nil, err
 	}
+	api, err := adminv1.NewClient(adminv1.ClientConfig{
+		BaseURL:       embedded.BaseURL,
+		HTTPTransport: opts.Engine,
+		UserAgent:     "butterdb-admin/" + opts.Version + " (" + runtime.GOOS + "/" + runtime.GOARCH + ")",
+		JSONTimeout:   jsonTimeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("app: admin client: %w", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &composition{
 		app:    a,
@@ -81,45 +97,52 @@ func compose(a fyne.App, w fyne.Window, opts Options, afterLoopStarts func(func(
 		ctx:    ctx,
 		cancel: cancel,
 		loop:   &loopGate{},
+		api:    api,
 	}
 	a.Settings().SetTheme(settingsui.ThemeFor(c.prefs.StringWithFallback(settingsvm.PrefTheme, settingsvm.ThemeSystem)))
 	c.sh = shell.New(a, w)
-	if err := c.buildConnect(); err != nil {
+	if err := c.buildGates(); err != nil {
 		cancel()
 		return nil, err
 	}
 	c.win.bindQuitShortcut()
 	w.SetOnClosed(c.shutdown)
-	c.sh.Navigator().Navigate(model.RouteConnect, nil)
-	c.loop.whenOpen(func() { go c.connectVM.AutoConnect(c.ctx) })
+	c.loop.whenOpen(func() { go c.startup() })
 	afterLoopStarts(c.loop.release)
 	return c, nil
 }
 
-func (c *composition) buildConnect() error {
-	platform := runtime.GOOS + "/" + runtime.GOARCH
-	v, err := connectvm.New(connectvm.Dependencies{
-		Dialer: c.opts.Dialer,
-		Tokens: connectvm.TokenStores{
-			Keychain: c.opts.Tokens,
-			File:     c.opts.Files,
-			Memory:   c.opts.Memory,
-		},
-		Profiles:          c.opts.Store,
-		Now:               c.opts.Now,
-		OnConnected:       c.onConnected,
-		DefaultDeviceName: c.opts.DeviceName,
-		Platform:          platform,
-		ClientVersion:     c.opts.Version,
-		UserAgent:         "butterdb-admin/" + c.opts.Version + " (" + platform + ")",
-	})
+func (c *composition) buildGates() error {
+	flow, err := newPrimaryFlow(c.api)
 	if err != nil {
-		return fmt.Errorf("app: connect view model: %w", err)
+		return err
 	}
-	c.connectVM = v
-	c.gate = hookedScreen{Screen: connect.NewScreen(v, c.sh.Navigator()), beforeShow: c.enterConnect, whenLoopRuns: c.loop.whenOpen}
-	c.sh.Register(c.gate)
+	c.telegram = telegramvm.New(flow, c.opts.Now)
+	wizard := telegramlink.NewLoginWizardFromViewModel(c.win, c.telegram, telegramlink.WizardOptions{AskAppCredentials: true}, c.sh.Notifier())
+	link := telegramlink.NewScreen(wizard)
+	link.OnLinked(func(adminv1.TelegramAccount) { c.sh.Navigator().Navigate(model.RouteProjects, nil) })
+	c.projectsVM = projectsvm.New(c.opts.Engine, c.opts.Now)
+	picker := projects.NewScreen(c.projectsVM, c.sh.Notifier(), c.onOpened)
+	c.gates = []shell.Screen{
+		hookedScreen{Screen: link, life: c.ctx, beforeShow: c.enterGate(model.RouteTelegram), whenLoopRuns: c.loop.whenOpen},
+		hookedScreen{Screen: picker, life: c.ctx, beforeShow: c.enterGate(model.RouteProjects), whenLoopRuns: c.loop.whenOpen},
+	}
+	for _, g := range c.gates {
+		c.sh.Register(g)
+	}
 	return nil
+}
+
+func (c *composition) startup() {
+	status, err := c.api.TelegramStatus(c.ctx)
+	if c.ctx.Err() != nil {
+		return
+	}
+	route := model.RouteTelegram
+	if err == nil && status.State == adminv1.TelegramLinked {
+		route = model.RouteProjects
+	}
+	fyne.Do(func() { c.sh.Navigator().Navigate(route, nil) })
 }
 
 func (c *composition) shutdown() {
@@ -146,80 +169,47 @@ func (c *composition) endSession() bool {
 
 func (c *composition) resetShell() {
 	c.sh.Reset()
-	c.sh.Register(c.gate)
+	for _, g := range c.gates {
+		c.sh.Register(g)
+	}
 }
 
-func (c *composition) enterConnect(_ context.Context, p model.Params) bool {
-	if !c.endSession() {
-		return true
+func (c *composition) enterGate(route model.Route) func(context.Context, model.Params) bool {
+	return func(_ context.Context, p model.Params) bool {
+		if !c.endSession() {
+			return c.closing.Load() == 0
+		}
+		c.resetShell()
+		c.closing.Add(1)
+		go func() {
+			ctx, cancel := context.WithTimeout(c.ctx, closeTimeout)
+			_ = c.opts.Engine.CloseProject(ctx)
+			cancel()
+			fyne.Do(func() {
+				c.closing.Add(-1)
+				c.sh.Navigator().Navigate(route, p)
+			})
+		}()
+		return false
 	}
-	c.resetShell()
-	c.sh.Navigator().Navigate(model.RouteConnect, p)
-	return false
 }
 
-func (c *composition) onConnected(p model.Profile) {
-	s, status, err := c.openSession(p)
-	if err != nil {
-		c.abandon(s, err)
-		return
-	}
-	fyne.Do(func() { c.activate(s, status) })
-}
-
-func (c *composition) openSession(p model.Profile) (*session, adminv1.TelegramStatus, error) {
-	token, err := c.opts.tokenStoreFor(p.TokenStorage).Get(p.ServerID)
-	if err != nil {
-		return nil, adminv1.TelegramStatus{}, fmt.Errorf("app: read device token: %w", err)
-	}
-	dialed, err := c.opts.Dialer.Dial(adminv1.ClientConfig{
-		BaseURL:     p.BaseURL,
-		Trust:       p.Trust,
-		Token:       token,
-		UserAgent:   "butterdb-admin/" + c.opts.Version + " (" + runtime.GOOS + "/" + runtime.GOARCH + ")",
-		JSONTimeout: jsonTimeout,
-	})
-	if err != nil {
-		return nil, adminv1.TelegramStatus{}, fmt.Errorf("app: dial: %w", err)
-	}
-	raw, ok := dialed.(sessionAPI)
-	if !ok {
-		return nil, adminv1.TelegramStatus{}, fmt.Errorf("app: dialer returned a client without session methods")
-	}
-	ctx, cancel := context.WithCancel(c.ctx)
-	s := &session{ctx: ctx, cancel: cancel, profile: p}
-	guarded, err := newGuardedClient(raw, func(err error) { c.sessionError(s, err) })
-	if err != nil {
-		cancel()
-		return nil, adminv1.TelegramStatus{}, err
-	}
-	s.api = guarded
-	if _, err := guarded.ServerInfo(ctx); err != nil {
-		return s, adminv1.TelegramStatus{}, err
-	}
-	status, err := guarded.TelegramStatus(ctx)
-	if err != nil {
-		return s, adminv1.TelegramStatus{}, err
-	}
-	return s, status, nil
+func (c *composition) onOpened(p embedded.Project) {
+	fyne.Do(func() { c.activate(p) })
 }
 
 func (c *composition) sessionError(s *session, err error) {
 	if s.ctx.Err() != nil || !s.handled.CompareAndSwap(false, true) {
 		return
 	}
-	c.connectVM.HandleSessionError(s.ctx, s.profile.ServerID, err)
-	s.cancel()
-	fyne.Do(func() { c.sh.Navigator().Navigate(model.RouteConnect, nil) })
+	fyne.Do(func() {
+		if s.ctx.Err() == nil {
+			c.sh.Navigator().Navigate(model.RouteTelegram, nil)
+		}
+	})
 }
 
-func (c *composition) abandon(s *session, err error) {
-	if s != nil {
-		if s.handled.Load() {
-			return
-		}
-		s.cancel()
-	}
+func (c *composition) abandon(err error) {
 	problem := model.Describe(err, c.opts.Now())
 	fyne.Do(func() { c.sh.Notifier().Problem(problem) })
 }

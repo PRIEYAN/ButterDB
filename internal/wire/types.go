@@ -13,11 +13,12 @@ const (
 	OpBucketConfig OpType = "bcfg"
 	OpBucketDelete OpType = "bdel"
 	OpEncConfig    OpType = "encfg"
+	OpKeyEscrow    OpType = "kesc"
 )
 
 const (
 	Prefix              = "TDX1"
-	FormatVersion       = 1
+	FormatVersion       = 2
 	MaxUnixTimestamp    = int64(253402300799)
 	MaxTextChars        = 4096
 	MaxCaptionChars     = 1024
@@ -74,4 +75,9 @@ type Op struct {
 	FormatVersion     int
 	MinReaderVersion  int
 	PrimaryUserID     int64
+	EscrowKDF         string
+	EscrowSalt        []byte
+	EscrowTime        int
+	EscrowMemoryKiB   int
+	EscrowParallel    int
 }

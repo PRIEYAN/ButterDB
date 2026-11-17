@@ -15,8 +15,8 @@ const (
 	adminModule = "github.com/PRIEYAN/ButterDB/apps/admin"
 	rootModule  = "github.com/PRIEYAN/ButterDB"
 	adminAPI    = rootModule + "/api/adminv1"
+	embeddedPkg = rootModule + "/internal/embedded"
 	fyneModule  = "fyne.io/fyne/v2"
-	keyringPkg  = "github.com/zalando/go-keyring"
 	imageX      = "golang.org/x/image"
 )
 
@@ -55,7 +55,7 @@ func importAllowed(pkg, importPath string) bool {
 		return true
 	}
 	rel, internal := inModule(importPath)
-	if !internal && strings.HasPrefix(importPath, rootModule+"/") && importPath != adminAPI {
+	if !internal && strings.HasPrefix(importPath, rootModule+"/") && importPath != adminAPI && importPath != embeddedPkg {
 		return false
 	}
 	if pkg == "internal/app" || pkg == "." {
@@ -63,11 +63,9 @@ func importAllowed(pkg, importPath string) bool {
 	}
 	switch {
 	case pkg == "internal/model":
-		return importPath == adminAPI
+		return importPath == adminAPI || importPath == embeddedPkg
 	case isViewModelPackage(pkg):
-		return importPath == adminAPI || rel == "internal/model"
-	case pkg == "internal/ui/connect/credstore" || pkg == "internal/ui/connect/profilestore":
-		return rel == "internal/model" || importPath == keyringPkg || (pkg == "internal/ui/connect/profilestore" && importPath == adminAPI)
+		return importPath == adminAPI || importPath == embeddedPkg || rel == "internal/model"
 	case pkg == "internal/shell":
 		return rel == "internal/model" || importPath == adminAPI || isFyne(importPath)
 	}
@@ -131,7 +129,7 @@ func TestImportRules(t *testing.T) {
 		t.Fatalf("module root: %v", err)
 	}
 	imports := collectImports(t, root)
-	if len(imports) < 20 {
+	if len(imports) < 15 {
 		t.Fatalf("only %d packages found under %s", len(imports), root)
 	}
 	for pkg, list := range imports {
@@ -168,8 +166,10 @@ func TestImportRulesRejectViolations(t *testing.T) {
 		{"app imports every screen", "internal/app", adminModule + "/internal/ui/objects", true},
 		{"shell imports fyne", "internal/shell", "fyne.io/fyne/v2/dialog", true},
 		{"shell imports a screen", "internal/shell", adminModule + "/internal/ui/keys", false},
-		{"credstore imports keyring", "internal/ui/connect/credstore", keyringPkg, true},
-		{"vm imports keyring", "internal/ui/connect/vm", keyringPkg, false},
+		{"vm imports embedded", "internal/ui/projects/vm", embeddedPkg, true},
+		{"screen imports embedded", "internal/ui/projects", embeddedPkg, false},
+		{"shell imports embedded", "internal/shell", embeddedPkg, false},
+		{"vm imports keyring", "internal/ui/projects/vm", "github.com/zalando/go-keyring", false},
 		{"objects imports image decoders", "internal/ui/objects", "golang.org/x/image/webp", true},
 		{"keys imports image decoders", "internal/ui/keys", "golang.org/x/image/webp", false},
 		{"anything imports stdlib", "internal/model", "encoding/json", true},

@@ -11,12 +11,9 @@ import (
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
-	"github.com/zalando/go-keyring"
 
-	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
-	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect/credstore"
-	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect/profilestore"
+	"github.com/PRIEYAN/ButterDB/internal/embedded"
 )
 
 var fixedNow = time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)
@@ -67,46 +64,38 @@ type harness struct {
 	comp      *composition
 	opts      Options
 	afterLoop func(func())
-	configDir string
-	store     *profilestore.Store
-	files     *credstore.File
-	closed    bool
+	admin     *fakeAdmin
+	engine    *fakeEngine
 }
 
-type harnessOption func(*harness)
+const testProjectPassword = "correct horse battery"
 
-func newHarness(t *testing.T, mutate ...func(*Options)) *harness {
+func newHarness(t *testing.T, adminOptions ...fakeAdminOption) *harness {
 	t.Helper()
-	keyring.MockInit()
 	base := test.NewTempApp(t)
 	queue := &uiQueue{}
 	wrapped := queuedApp{App: base, driver: queuedDriver{Driver: base.Driver(), queue: queue}}
 	fyne.SetCurrentApp(wrapped)
-	configDir := t.TempDir()
-	store, err := profilestore.New(profilestore.PathIn(configDir))
-	if err != nil {
-		t.Fatalf("profile store: %v", err)
-	}
-	files, err := credstore.NewFile(credstore.TokenDirIn(configDir))
-	if err != nil {
-		t.Fatalf("file store: %v", err)
-	}
-	h := &harness{t: t, queue: queue, app: wrapped, configDir: configDir, store: store, files: files, afterLoop: func(start func()) { start() }}
+	admin := newFakeAdmin(t, fixedNow, adminOptions...)
+	engine := newFakeEngine(admin)
+	h := &harness{t: t, queue: queue, app: wrapped, admin: admin, engine: engine, afterLoop: func(start func()) { start() }}
 	h.opts = Options{
 		Version:     "0.1.0",
 		Now:         func() time.Time { return fixedNow },
-		Dialer:      NewDialer(),
-		Tokens:      credstore.NewKeychain(),
-		Store:       store,
-		Files:       files,
-		Memory:      credstore.NewMemory(),
-		DeviceName:  "Test laptop",
+		Engine:      engine,
 		DownloadDir: t.TempDir(),
 	}
-	for _, m := range mutate {
-		m(&h.opts)
-	}
 	return h
+}
+
+func (h *harness) startInProject(name string) embedded.Project {
+	h.t.Helper()
+	p := h.engine.seedProject(name, embedded.ProjectReady, testProjectPassword)
+	h.start()
+	h.waitRoute(model.RouteProjects)
+	test.Tap(h.waitButton("Open"))
+	h.waitRoute(model.RouteDashboard)
+	return p
 }
 
 func (h *harness) start() {
@@ -289,38 +278,6 @@ func (h *harness) typeShortcut(key fyne.KeyName) {
 	}
 	handler.TypedShortcut(&desktop.CustomShortcut{KeyName: key, Modifier: fyne.KeyModifierShortcutDefault})
 }
-
-func (h *harness) seedProfile(admin *fakeAdmin, kind model.TokenStorage) model.Profile {
-	h.t.Helper()
-	profile := model.Profile{
-		ServerID:      testServerID,
-		Label:         "home server",
-		BaseURL:       admin.srv.URL,
-		Trust:         adminv1Pinned(admin.pin),
-		DeviceID:      testDeviceID,
-		DeviceName:    "Test laptop",
-		TokenStorage:  kind,
-		TokenIssuedAt: fixedNow,
-		AddedAt:       fixedNow,
-		LastUsedAt:    fixedNow,
-	}
-	if err := h.store.Put(profile); err != nil {
-		h.t.Fatalf("seed profile: %v", err)
-	}
-	if err := h.store.SetLastUsed(profile.ServerID); err != nil {
-		h.t.Fatalf("seed last used: %v", err)
-	}
-	if err := h.opts.tokenStoreFor(kind).Set(profile.ServerID, testDeviceTok); err != nil {
-		h.t.Fatalf("seed token: %v", err)
-	}
-	return profile
-}
-
-func adminv1Pinned(pin string) adminv1.Trust {
-	return adminv1.Trust{Mode: adminv1.TrustPinned, SPKISHA256: pin}
-}
-
-func reflectType(v any) string { return reflect.TypeOf(v).String() }
 
 func (h *harness) waitVisible(what string, find func() fyne.CanvasObject) fyne.CanvasObject {
 	h.t.Helper()

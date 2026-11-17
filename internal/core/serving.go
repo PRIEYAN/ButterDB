@@ -82,7 +82,7 @@ func (s *Serving) assemble(ctx context.Context, a *App, files blockcache.Files, 
 	if s.starter, err = NewStorageStarter(StorageStarterDependencies{
 		Config: a.cfg, Data: a.DataDir(), FS: a.fsys, Files: files, Control: s.session.control, Ring: s.session.ring, Keys: s.keys,
 		Accounts: s.session.accounts, Source: s.session, Projections: appProjections{app: a}, Slot: s.Backend, Clock: a.clock,
-		Sleeper: flow.SystemSleeper{}, Random: cryptorand.Reader, Logger: a.logger,
+		Sleeper: flow.SystemSleeper{}, Random: cryptorand.Reader, Logger: a.logger, Embedded: a.embed,
 	}); err != nil {
 		return err
 	}
@@ -102,10 +102,13 @@ func (s *Serving) startAdmin(ctx context.Context, a *App, files tlscert.Filesyst
 		Config: a.cfg, Data: a.DataDir(), Control: s.session.control, Keys: s.keys, Relay: s.session.Identity(),
 		Messages: telegramSavedMessages{telegram: s.session.Telegram}, Backend: s.Backend, ServerID: serverID,
 		Build: a.build, Files: files, Clock: a.clock, Sleeper: flow.SystemSleeper{}, Random: cryptorand.Reader, Logger: a.logger,
-		LinkEvents: s.starter, Registry: s.starter,
+		LinkEvents: s.starter, Registry: s.starter, Embedded: a.embed != nil,
 	})
 	if err != nil {
 		return err
+	}
+	if a.embed != nil {
+		return nil
 	}
 	return s.Admin.Start(ctx)
 }

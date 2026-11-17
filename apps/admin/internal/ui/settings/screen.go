@@ -40,7 +40,9 @@ func (s *Screen) Show(ctx context.Context, p model.Params) {
 	go s.view.loadVisible(ctx)
 }
 
-func (s *Screen) Hide() {}
+func (s *Screen) Hide() {
+	s.view.project.clearSecrets()
+}
 
 type appClipboard struct{}
 

@@ -154,7 +154,7 @@ func TestSidebarOrderAndDisabledReasons(t *testing.T) {
 	s, _ := newTestShell(t)
 	for _, sc := range []*fakeScreen{
 		newFakeScreen(model.RouteSettings, fyne.Key6),
-		newFakeScreen(model.RouteConnect, ""),
+		newFakeScreen(model.RouteProjects, ""),
 		newFakeScreen(model.RouteBuckets, fyne.Key2),
 		newFakeScreen(model.RouteTelegram, ""),
 		newFakeScreen(model.RouteDashboard, fyne.Key1),
@@ -163,7 +163,6 @@ func TestSidebarOrderAndDisabledReasons(t *testing.T) {
 	}
 	nav := s.Navigator()
 	nav.SetEnabled(model.RouteDashboard, false, "Link Telegram first")
-	nav.SetEnabled(model.RouteTelegram, false, "")
 
 	var got []model.Route
 	for _, e := range s.sidebar.entries {
@@ -187,10 +186,10 @@ func TestShortcutsNavigateAndRefresh(t *testing.T) {
 	s, win := newTestShell(t)
 	dashboard := newFakeScreen(model.RouteDashboard, fyne.Key1)
 	buckets := newFakeScreen(model.RouteBuckets, fyne.Key2)
-	connect := newFakeScreen(model.RouteConnect, "")
+	projects := newFakeScreen(model.RouteProjects, "")
 	s.Register(dashboard)
 	s.Register(buckets)
-	s.Register(connect)
+	s.Register(projects)
 
 	typeShortcut(t, win, fyne.Key2, fyne.KeyModifierShortcutDefault)
 	if s.Navigator().Current() != model.RouteBuckets {
@@ -205,8 +204,11 @@ func TestShortcutsNavigateAndRefresh(t *testing.T) {
 		t.Fatalf("Mod+R: shown %d times, first context cancelled %v", len(buckets.shown), buckets.ctxs[0].Err() != nil)
 	}
 	typeShortcut(t, win, fyne.KeyW, fyne.KeyModifierShortcutDefault)
-	if s.Navigator().Current() != model.RouteConnect {
-		t.Fatalf("Current = %q after Mod+W, want connect", s.Navigator().Current())
+	if s.Navigator().Current() != model.RouteProjects {
+		t.Fatalf("Current = %q after Mod+W, want projects", s.Navigator().Current())
+	}
+	if s.sidebar.root.Visible() {
+		t.Fatalf("sidebar visible on the project picker")
 	}
 }
 
@@ -248,17 +250,17 @@ func TestRegisterReplacesCurrentScreen(t *testing.T) {
 	}
 }
 
-func TestServerLabelSetsWindowTitle(t *testing.T) {
+func TestProjectLabelSetsWindowTitle(t *testing.T) {
 	s, win := newTestShell(t)
-	s.SetServerLabel("home server", true)
-	if win.Title() != "butterDB Admin — home server" {
+	s.SetProjectLabel("photos")
+	if win.Title() != "butterDB Admin — photos" {
 		t.Fatalf("title = %q", win.Title())
 	}
-	if s.linkTxt.Text != "Connected" || s.serverTxt.Text != "home server" {
-		t.Fatalf("status = %q, %q", s.linkTxt.Text, s.serverTxt.Text)
+	if s.linkTxt.Text != "Project open" || s.serverTxt.Text != "photos" || s.sidebar.project.Text != "photos" {
+		t.Fatalf("status = %q, %q, sidebar %q", s.linkTxt.Text, s.serverTxt.Text, s.sidebar.project.Text)
 	}
-	s.SetServerLabel("", false)
-	if win.Title() != "butterDB Admin" || s.linkTxt.Text != "Offline" {
+	s.SetProjectLabel("")
+	if win.Title() != "butterDB Admin" || s.linkTxt.Text != "No project open" {
 		t.Fatalf("title = %q, status = %q", win.Title(), s.linkTxt.Text)
 	}
 	if s.Window() != win {

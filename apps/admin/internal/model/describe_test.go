@@ -116,8 +116,8 @@ func TestDescribeMapping(t *testing.T) {
 		{name: "validation without field", err: apiError(422, adminv1.CodeValidationFailed, func(b *adminv1.ErrorBody) {
 			b.Details = map[string]any{"reason": "too long"}
 		}), wantPresent: PresentDialog, wantTitle: "Check this value: too long"},
-		{name: "unauthenticated", err: apiError(401, adminv1.CodeUnauthenticated, nil), wantPresent: PresentRoute, wantRoute: RouteConnect, wantTitle: textNotSignedIn},
-		{name: "device revoked", err: apiError(401, adminv1.CodeDeviceRevoked, nil), wantPresent: PresentRoute, wantRoute: RouteConnect, wantTitle: textRevoked},
+		{name: "unauthenticated", err: apiError(401, adminv1.CodeUnauthenticated, nil), wantPresent: PresentRoute, wantRoute: RouteTelegram, wantTitle: textNotSignedIn},
+		{name: "device revoked", err: apiError(401, adminv1.CodeDeviceRevoked, nil), wantPresent: PresentDialog, wantTitle: textRevoked},
 		{name: "rate limited", err: apiError(429, adminv1.CodeRateLimited, func(b *adminv1.ErrorBody) {
 			b.RetryAfterSeconds = 12
 		}), wantPresent: PresentBanner, wantTitle: "Too many attempts. Try again in 12 s.", wantRetryable: true},
@@ -126,7 +126,7 @@ func TestDescribeMapping(t *testing.T) {
 			b.Details = map[string]any{"state": "rebuilding"}
 		}), wantPresent: PresentBanner, wantTitle: "The server is rebuilding. Waiting…", wantRetryable: true},
 		{name: "not implemented", err: apiError(501, adminv1.CodeNotImplemented, nil), wantPresent: PresentInline, wantTitle: textNotImplemented},
-		{name: "already claimed", err: apiError(409, adminv1.CodeAlreadyClaimed, nil), wantPresent: PresentRoute, wantRoute: RouteConnect, wantTitle: textAlreadyClaimed},
+		{name: "already claimed", err: apiError(409, adminv1.CodeAlreadyClaimed, nil), wantPresent: PresentDialog, wantTitle: textAlreadyClaimed},
 		{name: "setup token invalid", err: apiError(401, adminv1.CodeSetupTokenInvalid, nil), wantPresent: PresentInline, wantField: fieldSetupToken, wantTitle: textSetupTokenInvalid},
 		{name: "last device", err: apiError(409, adminv1.CodeLastDevice, nil), wantPresent: PresentDialog, wantTitle: textLastDevice},
 		{name: "telegram not linked", err: apiError(409, adminv1.CodeTelegramNotLinked, nil), wantPresent: PresentRoute, wantRoute: RouteTelegram, wantTitle: textTelegramNotLinked},
@@ -269,26 +269,6 @@ func TestDescribeFloodWaitUsesUntil(t *testing.T) {
 				t.Errorf("Presentation = %q, Retryable = %v", p.Presentation, p.Retryable)
 			}
 		})
-	}
-}
-
-func TestDescribePinMismatch(t *testing.T) {
-	t.Parallel()
-	mismatch := &adminv1.PinMismatchError{Expected: "SHA256:aa", Got: "SHA256:bb"}
-	for _, err := range []error{mismatch, fmt.Errorf("connect: %w", mismatch)} {
-		p := Describe(err, testNow)
-		if p.Presentation != PresentRoute || p.Route != RouteConnect {
-			t.Fatalf("Presentation = %q, Route = %q", p.Presentation, p.Route)
-		}
-		if p.Title != "Server identity changed" {
-			t.Fatalf("Title = %q", p.Title)
-		}
-		if p.Details["expected"] != "SHA256:aa" || p.Details["got"] != "SHA256:bb" {
-			t.Fatalf("Details = %v", p.Details)
-		}
-		if p.Retryable {
-			t.Fatalf("pin mismatch must not be retryable")
-		}
 	}
 }
 

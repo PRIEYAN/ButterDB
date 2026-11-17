@@ -28,16 +28,16 @@ func TestProblemPresentation(t *testing.T) {
 		{name: "banner", problem: model.Problem{Title: "The server is rebuilding.", Presentation: model.PresentBanner}, wantBanner: true, wantBannerTx: "The server is rebuilding."},
 		{name: "dialog", problem: model.Problem{Title: "The request is too large.", Presentation: model.PresentDialog}, wantDialog: true},
 		{name: "inline falls back to dialog", problem: model.Problem{Title: "Check this value.", Presentation: model.PresentInline}, wantDialog: true},
-		{name: "route shows dialog then navigates", problem: model.Problem{Title: "This device was revoked.", Presentation: model.PresentRoute, Route: model.RouteConnect}, wantDialog: true, wantRoute: model.RouteConnect},
+		{name: "route shows dialog then navigates", problem: model.Problem{Title: "Log in to Telegram first.", Presentation: model.PresentRoute, Route: model.RouteTelegram}, wantDialog: true, wantRoute: model.RouteTelegram},
 		{name: "empty presentation shows nothing", problem: model.Problem{Presentation: ""}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s, win := newTestShell(t)
 			dashboard := newFakeScreen(model.RouteDashboard, fyne.Key1)
-			connect := newFakeScreen(model.RouteConnect, "")
+			telegram := newFakeScreen(model.RouteTelegram, "")
 			s.Register(dashboard)
-			s.Register(connect)
+			s.Register(telegram)
 			s.Navigator().Navigate(model.RouteDashboard, nil)
 
 			s.Notifier().Problem(tc.problem)

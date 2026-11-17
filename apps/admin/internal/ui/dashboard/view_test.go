@@ -348,7 +348,7 @@ func TestRouteProblemNavigatesWithoutNotifier(t *testing.T) {
 	content := NewView(v, nav)
 	test.NewTempWindow(t, content)
 	v.Refresh(context.Background())
-	if len(nav.navigated) != 1 || nav.navigated[0] != model.RouteConnect {
+	if len(nav.navigated) != 1 || nav.navigated[0] != model.RouteTelegram {
 		t.Fatalf("navigated = %v", nav.navigated)
 	}
 }

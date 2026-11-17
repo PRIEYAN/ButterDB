@@ -332,7 +332,7 @@ func TestPollStopsOnRouteProblem(t *testing.T) {
 		t.Fatalf("waited %v after a route problem", d)
 	default:
 	}
-	if p := v.State().Get().Problem; p == nil || p.Presentation != model.PresentRoute || p.Route != model.RouteConnect {
+	if p := v.State().Get().Problem; p == nil || p.Presentation != model.PresentRoute || p.Route != model.RouteTelegram {
 		t.Fatalf("Problem = %+v", p)
 	}
 }

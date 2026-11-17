@@ -121,4 +121,5 @@ type RegistryDependencies struct {
 	Creator        ChannelCreator
 	DeploymentID   string
 	KeyFingerprint string
+	Title          string
 }

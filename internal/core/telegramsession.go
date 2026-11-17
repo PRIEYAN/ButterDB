@@ -66,13 +66,20 @@ func (a *App) assembleSession(ctx context.Context, role identity.Role, ring *key
 		Random:   cryptorand.Reader,
 		Sleeper:  flow.SystemSleeper{},
 		Logger:   a.logger,
-		Keys:     ring,
+		Keys:     a.sessionKeySource(ring),
 		Accounts: accounts,
 	})
 	if err != nil {
 		return nil, err
 	}
 	return &TelegramSession{Telegram: telegram, app: a, ring: ring, control: control, accounts: accounts}, nil
+}
+
+func (a *App) sessionKeySource(ring *keyring.Ring) SessionKeySource {
+	if a.embed != nil && a.embed.SessionKeys != nil {
+		return a.embed.SessionKeys
+	}
+	return ring
 }
 
 func (s *TelegramSession) Close(ctx context.Context) error {

@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/objects/vm"
@@ -34,12 +35,17 @@ const (
 	filterWidth       = 260
 )
 
+type FileOpener interface {
+	Open(context.Context, string, adminv1.ObjectSummary)
+}
+
 type Options struct {
 	Context     context.Context
 	Notifier    shell.Notifier
 	Clipboard   model.Clipboard
 	Now         func() time.Time
 	DownloadDir func() string
+	Opener      FileOpener
 }
 
 type browser struct {
@@ -148,7 +154,6 @@ func (b *browser) buildToolbar() fyne.CanvasObject {
 		widget.NewButtonWithIcon("Upload files…", theme.UploadIcon(), b.chooseFileToUpload),
 		widget.NewButtonWithIcon("Download", theme.DownloadIcon(), b.startDownload),
 		widget.NewButtonWithIcon("Delete…", theme.DeleteIcon(), b.requestDelete),
-		widget.NewButtonWithIcon("Copy presigned URL…", theme.ContentCopyIcon(), b.openPresignDialog),
 		widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() { go b.vmodel.Refresh(b.commandContext()) }),
 	)
 }

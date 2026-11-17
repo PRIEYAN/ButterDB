@@ -187,3 +187,11 @@ func expandDefaultTokens(cfg *Config, defaults *Config, dataDir string) {
 		f.value.SetString(dataDir + strings.TrimPrefix(value, dataDirToken))
 	}
 }
+
+func DefaultIn(dataDir string) Config {
+	cfg := tokenDefaults()
+	tokens := tokenDefaults()
+	cfg.DataDir = dataDir
+	expandDefaultTokens(&cfg, &tokens, dataDir)
+	return cfg
+}

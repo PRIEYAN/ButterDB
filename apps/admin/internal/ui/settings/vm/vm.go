@@ -7,21 +7,22 @@ import (
 
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
+	"github.com/PRIEYAN/ButterDB/internal/embedded"
 )
 
 type Client interface {
-	ServerInfo(ctx context.Context) (adminv1.ServerInfo, error)
-	ListDevices(ctx context.Context) (adminv1.DeviceList, error)
-	RenameDevice(ctx context.Context, deviceID string, req adminv1.UpdateDeviceRequest) (adminv1.Device, error)
-	RevokeDevice(ctx context.Context, deviceID string, confirmLast bool) error
-	RotateDeviceToken(ctx context.Context) (adminv1.DeviceCredentials, error)
+	Status(ctx context.Context) (adminv1.Status, error)
 	TelegramStatus(ctx context.Context) (adminv1.TelegramStatus, error)
-	UnlinkTelegram(ctx context.Context) (adminv1.TelegramStatus, error)
 	Audit(ctx context.Context, q adminv1.AuditQuery) (adminv1.AuditPage, error)
 }
 
-type CertificateProber interface {
-	Probe(ctx context.Context, baseURL string) (adminv1.CertificateInfo, error)
+type Account interface {
+	Current() (embedded.Project, bool)
+	Rename(ctx context.Context, id embedded.ProjectID, name string) error
+	ChangePassword(ctx context.Context, id embedded.ProjectID, oldPassword, newPassword []byte) error
+	ResetKey(ctx context.Context, id embedded.ProjectID, newPassword []byte, confirmation string) (embedded.ResetReport, error)
+	Logout(ctx context.Context) error
+	RemoveDevice(ctx context.Context) error
 }
 
 type Preferences interface {
@@ -32,12 +33,7 @@ type Preferences interface {
 }
 
 type Session struct {
-	Profile            model.Profile
-	Tokens             model.TokenStore
-	Profiles           model.ProfileStore
-	Keychain           model.TokenStore
-	Prober             CertificateProber
-	SetClientToken     func(token string)
+	Account            Account
 	Preferences        Preferences
 	AppVersion         string
 	DefaultDownloadDir string
@@ -47,9 +43,7 @@ type State struct {
 	Loading     bool
 	Problem     *model.Problem
 	Notice      string
-	Connection  ConnectionState
-	Device      DeviceState
-	Devices     DevicesState
+	Project     ProjectState
 	Telegram    TelegramState
 	Activity    ActivityState
 	About       AboutState
@@ -73,7 +67,7 @@ func New(c Client, now func() time.Time, s Session) *ViewModel {
 	}
 	v := &ViewModel{client: c, now: now, session: s, state: model.NewObservable(State{})}
 	v.state.Set(State{
-		Connection:  connectionFor(s, ConnectionState{}),
+		Project:     v.currentProject(),
 		Preferences: v.readPreferences(),
 		About:       aboutStatic(s.AppVersion, ""),
 	})
@@ -90,23 +84,18 @@ func (v *ViewModel) Now() time.Time {
 
 func (v *ViewModel) Refresh(ctx context.Context) {
 	v.begin()
-	info, infoErr := v.client.ServerInfo(ctx)
-	devices, devicesErr := v.client.ListDevices(ctx)
-	status, statusErr := v.client.TelegramStatus(ctx)
+	status, statusErr := v.client.Status(ctx)
+	telegram, telegramErr := v.client.TelegramStatus(ctx)
 	v.finish(func(s *State) {
-		if infoErr == nil {
-			s.Connection = connectionFor(v.snapshot(), s.Connection)
-			s.Connection.ServerVersion, s.Connection.ServerState = info.ServerVersion, info.State
-			s.About = aboutStatic(v.snapshot().AppVersion, info.ServerVersion)
-		}
-		if devicesErr == nil {
-			v.applyDevices(s, devices)
-		}
+		s.Project = v.currentProject()
 		if statusErr == nil {
-			s.Telegram = TelegramState{Loaded: true, Status: status}
+			s.About = aboutStatic(v.snapshot().AppVersion, status.ServerVersion)
+		}
+		if telegramErr == nil {
+			s.Telegram = TelegramState{Loaded: true, Status: telegram}
 		}
 		s.Preferences = v.readPreferences()
-	}, v.problemOf(infoErr, devicesErr, statusErr))
+	}, v.problemOf(statusErr, telegramErr))
 }
 
 func (v *ViewModel) snapshot() Session {

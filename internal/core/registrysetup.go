@@ -30,6 +30,9 @@ const (
 
 type RegistryOptions struct {
 	RegistryChannelID int64
+	Create            bool
+	Title             string
+	Password          []byte
 }
 
 type RegistryOutcome struct {
@@ -56,6 +59,7 @@ type RegistrySetupDependencies struct {
 	Sleeper       flow.Sleeper
 	Random        io.Reader
 	Logger        *slog.Logger
+	ServerKeyFile string
 }
 
 func SetupRegistry(ctx context.Context, deps RegistrySetupDependencies, opts RegistryOptions) (RegistryOutcome, error) {
@@ -88,6 +92,9 @@ func (r *registrySetup) run(ctx context.Context) (RegistryOutcome, error) {
 	}
 	if found {
 		return r.confirmExisting(ctx, existing)
+	}
+	if r.opts.Create {
+		return r.create(ctx)
 	}
 	discoverer, err := reconcile.NewDiscoverer(reconcile.DiscoveryDependencies{
 		Telegram: r.deps.Telegram,
@@ -145,20 +152,21 @@ func (r *registrySetup) create(ctx context.Context) (RegistryOutcome, error) {
 		return RegistryOutcome{}, err
 	}
 	assembled, err := NewSync(SyncDependencies{
-		Database:     r.deps.Database,
-		Control:      r.deps.Control,
-		Projection:   r.deps.Projection,
-		Telegram:     r.deps.Telegram,
-		Sender:       r.deps.Sender,
-		Signals:      r.deps.Signals,
-		Ring:         r.deps.Ring,
-		State:        r.state,
-		ActorUserID:  r.deps.PrimaryUserID,
-		DeploymentID: deploymentID,
-		Clock:        r.deps.Clock,
-		Sleeper:      r.deps.Sleeper,
-		Random:       r.deps.Random,
-		Logger:       r.deps.Logger,
+		Database:      r.deps.Database,
+		Control:       r.deps.Control,
+		Projection:    r.deps.Projection,
+		Telegram:      r.deps.Telegram,
+		Sender:        r.deps.Sender,
+		Signals:       r.deps.Signals,
+		Ring:          r.deps.Ring,
+		State:         r.state,
+		ActorUserID:   r.deps.PrimaryUserID,
+		DeploymentID:  deploymentID,
+		RegistryTitle: r.opts.Title,
+		Clock:         r.deps.Clock,
+		Sleeper:       r.deps.Sleeper,
+		Random:        r.deps.Random,
+		Logger:        r.deps.Logger,
 	})
 	if err != nil {
 		return RegistryOutcome{}, err
@@ -166,6 +174,11 @@ func (r *registrySetup) create(ctx context.Context) (RegistryOutcome, error) {
 	registry, err := assembled.Registry.Ensure(ctx)
 	if err != nil {
 		return RegistryOutcome{}, fmt.Errorf("core: registry setup: %w", err)
+	}
+	if len(r.opts.Password) > 0 {
+		if _, err := publishEscrow(ctx, assembled.Registry, r.deps.ServerKeyFile, r.opts.Password, deploymentID, r.deps.Clock, r.deps.Random); err != nil {
+			return RegistryOutcome{}, err
+		}
 	}
 	return RegistryOutcome{Created: true, ChannelID: registry.ChannelID, DeploymentID: deploymentID}, nil
 }

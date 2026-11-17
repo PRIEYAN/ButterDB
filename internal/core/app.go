@@ -24,6 +24,13 @@ type Dependencies struct {
 	Clock     clock.Clock
 	FS        fsx.FS
 	Build     BuildInfo
+	Embedded  *EmbeddedOptions
+}
+
+type EmbeddedOptions struct {
+	SessionKeys SessionKeySource
+	Registry    RegistryOptions
+	NoRegistry  bool
 }
 
 type App struct {
@@ -33,6 +40,7 @@ type App struct {
 	clock  clock.Clock
 	fsys   fsx.FS
 	build  BuildInfo
+	embed  *EmbeddedOptions
 
 	mu   sync.Mutex
 	data *datadir.Dir
@@ -59,6 +67,7 @@ func New(deps Dependencies) (*App, error) {
 		clock:  deps.Clock,
 		fsys:   deps.FS,
 		build:  deps.Build,
+		embed:  deps.Embedded,
 	}
 	app.group.Add("datadir", &dataDirComponent{app: app, fsys: deps.FS})
 	app.group.Add("processlock", &lockComponent{app: app, role: deps.Role, clock: deps.Clock})

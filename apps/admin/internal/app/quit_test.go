@@ -24,7 +24,7 @@ func (h *harness) appClosed() bool {
 func TestQuitShortcutClosesTheWindowWithoutSession(t *testing.T) {
 	h := newHarness(t)
 	h.start()
-	h.waitRoute(model.RouteConnect)
+	h.waitRoute(model.RouteTelegram)
 
 	h.typeShortcut(fyne.KeyQ)
 
@@ -32,11 +32,8 @@ func TestQuitShortcutClosesTheWindowWithoutSession(t *testing.T) {
 }
 
 func TestQuitShortcutClosesTheWindowWhenNoTransferRuns(t *testing.T) {
-	admin := newFakeAdmin(t, fixedNow, withLinked())
-	h := newHarness(t)
-	h.seedProfile(admin, model.TokenKeychain)
-	h.start()
-	h.waitRoute(model.RouteDashboard)
+	h := newHarness(t, withLinked())
+	h.startInProject("photos")
 
 	h.typeShortcut(fyne.KeyQ)
 
@@ -44,14 +41,12 @@ func TestQuitShortcutClosesTheWindowWhenNoTransferRuns(t *testing.T) {
 }
 
 func TestQuitShortcutAsksBeforeDroppingRunningTransfers(t *testing.T) {
-	admin := newFakeAdmin(t, fixedNow, withLinked())
+	h := newHarness(t, withLinked())
+	admin := h.admin
 	admin.seedBucket("photos")
 	admin.putGate = make(chan struct{})
 	admin.putStarted = make(chan struct{}, 1)
-	h := newHarness(t)
-	h.seedProfile(admin, model.TokenKeychain)
-	h.start()
-	h.waitRoute(model.RouteDashboard)
+	h.startInProject("photos")
 	h.browseBucket("photos")
 
 	models := h.session().models

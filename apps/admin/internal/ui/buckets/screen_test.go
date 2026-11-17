@@ -507,7 +507,7 @@ func TestRouteProblemNavigatesOnce(t *testing.T) {
 	in.Name = "photos"
 	f.vm.Create(context.Background(), in)
 	f.vm.Refresh(context.Background())
-	if len(f.nav.routes) != 1 || f.nav.routes[0] != model.RouteConnect {
+	if len(f.nav.routes) != 1 || f.nav.routes[0] != model.RouteTelegram {
 		t.Fatalf("routes = %v", f.nav.routes)
 	}
 }

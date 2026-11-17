@@ -429,7 +429,6 @@ func TestNewDiscovererRejectsMissingDependencies(t *testing.T) {
 		deps DiscoveryDependencies
 	}{
 		{name: "telegram", deps: DiscoveryDependencies{Identity: ownIdentity(), Logger: discardLogger()}},
-		{name: "fingerprint", deps: DiscoveryDependencies{Telegram: w.alice, Identity: Identity{UserID: testUser}, Logger: discardLogger()}},
 		{name: "user", deps: DiscoveryDependencies{Telegram: w.alice, Identity: Identity{KeyFingerprint: testKFP}, Logger: discardLogger()}},
 		{name: "logger", deps: DiscoveryDependencies{Telegram: w.alice, Identity: ownIdentity()}},
 	}

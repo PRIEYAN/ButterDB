@@ -142,7 +142,7 @@ func (b *browser) activateRow(index int) {
 		go b.vmodel.OpenFolder(b.commandContext(), row.Key)
 	case vm.RowObject:
 		b.focusObject(row.Key)
-		b.win.Canvas().Focus(b.details.focusTarget())
+		b.askOpenFile(row)
 	}
 }
 

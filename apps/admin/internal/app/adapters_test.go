@@ -7,53 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/zalando/go-keyring"
-
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
-	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
-	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/connect/credstore"
 )
-
-func TestProbeKeychainSelectsKeychainWhenItWorks(t *testing.T) {
-	keyring.MockInit()
-	keychain := credstore.NewKeychain()
-
-	got := ProbeKeychain(keychain)
-	if got != model.TokenStore(keychain) || !keychainUsable(got) {
-		t.Fatalf("a working keychain was not selected: %T", got)
-	}
-	if _, err := keyring.Get(credstore.KeychainService, probeAccount); !errors.Is(err, keyring.ErrNotFound) {
-		t.Fatalf("probe entry left in the keychain: %v", err)
-	}
-}
-
-func TestProbeKeychainFallsBackWhenUnavailable(t *testing.T) {
-	keyring.MockInitWithError(keyring.ErrUnsupportedPlatform)
-	t.Cleanup(keyring.MockInit)
-
-	got := ProbeKeychain(credstore.NewKeychain())
-	if keychainUsable(got) {
-		t.Fatalf("an unavailable keychain was selected: %T", got)
-	}
-	if got.Kind() != model.TokenKeychain {
-		t.Fatalf("fallback kind %q, want keychain so the vm asks for a fallback", got.Kind())
-	}
-	if err := got.Set("server", "token"); !errors.Is(err, model.ErrKeychainUnavailable) {
-		t.Fatalf("Set error %v, want ErrKeychainUnavailable", err)
-	}
-	if _, err := got.Get("server"); !errors.Is(err, model.ErrKeychainUnavailable) {
-		t.Fatalf("Get error %v, want ErrKeychainUnavailable", err)
-	}
-	if err := got.Delete("server"); !errors.Is(err, model.ErrKeychainUnavailable) {
-		t.Fatalf("Delete error %v, want ErrKeychainUnavailable", err)
-	}
-}
-
-func TestProbeKeychainRejectsNil(t *testing.T) {
-	if keychainUsable(ProbeKeychain(nil)) {
-		t.Fatalf("a nil keychain counted as usable")
-	}
-}
 
 func TestOptionsRejectMissingDependencies(t *testing.T) {
 	h := newHarness(t)
@@ -63,11 +18,7 @@ func TestOptionsRejectMissingDependencies(t *testing.T) {
 		mutate func(*Options)
 	}{
 		{"no clock", func(o *Options) { o.Now = nil }},
-		{"no dialer", func(o *Options) { o.Dialer = nil }},
-		{"no keychain tokens", func(o *Options) { o.Tokens = nil }},
-		{"no file tokens", func(o *Options) { o.Files = nil }},
-		{"no memory tokens", func(o *Options) { o.Memory = nil }},
-		{"no profile store", func(o *Options) { o.Store = nil }},
+		{"no engine", func(o *Options) { o.Engine = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,64 +37,6 @@ func TestOptionsRejectMissingDependencies(t *testing.T) {
 	}
 	if _, err := Build(h.app, nil, full); !errors.Is(err, ErrMissingDependency) {
 		t.Fatalf("Build without a window: %v", err)
-	}
-}
-
-func TestBuildReturnsShellOnConnectRoute(t *testing.T) {
-	h := newHarness(t)
-	win := h.app.NewWindow("x")
-	sh, err := Build(h.app, win, h.opts)
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if sh == nil || sh.Window() != win {
-		t.Fatalf("Build returned a shell that does not own the window")
-	}
-	if got := sh.Navigator().Current(); got != model.RouteConnect {
-		t.Fatalf("first route %q, want connect", got)
-	}
-	h.drain()
-}
-
-func TestAPIDialerProbesAndDials(t *testing.T) {
-	admin := newFakeAdmin(t, fixedNow, withLinked())
-	dialer := NewDialer()
-
-	info, err := dialer.Probe(context.Background(), admin.srv.URL)
-	if err != nil {
-		t.Fatalf("Probe: %v", err)
-	}
-	if info.SPKISHA256 != admin.pin {
-		t.Fatalf("probed pin %q, want %q", info.SPKISHA256, admin.pin)
-	}
-	if info.VerifiesWithSystemRoots {
-		t.Fatalf("a self-signed test certificate verified with system roots")
-	}
-
-	client, err := dialer.Dial(adminv1.ClientConfig{BaseURL: admin.srv.URL, Trust: adminv1Pinned(admin.pin), Token: testDeviceTok})
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	if _, ok := client.(sessionAPI); !ok {
-		t.Fatalf("dialed client %T lacks the session methods", client)
-	}
-	got, err := client.ServerInfo(context.Background())
-	if err != nil || got.ServerID != testServerID {
-		t.Fatalf("ServerInfo = %+v, %v", got, err)
-	}
-
-	wrong := "SHA256:" + fmt.Sprintf("%064x", 1)
-	pinned, err := dialer.Dial(adminv1.ClientConfig{BaseURL: admin.srv.URL, Trust: adminv1Pinned(wrong)})
-	if err != nil {
-		t.Fatalf("Dial with a wrong pin: %v", err)
-	}
-	var mismatch *adminv1.PinMismatchError
-	if _, err := pinned.ServerInfo(context.Background()); !errors.As(err, &mismatch) {
-		t.Fatalf("ServerInfo with a wrong pin = %v, want PinMismatchError", err)
-	}
-
-	if _, err := dialer.Dial(adminv1.ClientConfig{BaseURL: "::not a url::"}); err == nil {
-		t.Fatalf("Dial accepted an invalid URL")
 	}
 }
 
@@ -247,10 +140,9 @@ func TestGuardedClientReportsSessionErrorsOnly(t *testing.T) {
 	}{
 		{"no error", nil, 0},
 		{"unauthenticated", apiError(adminv1.CodeUnauthenticated), 1},
-		{"device revoked", apiError(adminv1.CodeDeviceRevoked), 1},
-		{"wrapped device revoked", fmt.Errorf("call: %w", apiError(adminv1.CodeDeviceRevoked)), 1},
-		{"pin mismatch", &adminv1.PinMismatchError{Expected: "a", Got: "b"}, 1},
-		{"wrapped pin mismatch", fmt.Errorf("call: %w", &adminv1.PinMismatchError{Expected: "a", Got: "b"}), 1},
+		{"wrapped unauthenticated", fmt.Errorf("call: %w", apiError(adminv1.CodeUnauthenticated)), 1},
+		{"telegram not linked", apiError(adminv1.CodeTelegramNotLinked), 1},
+		{"device revoked", apiError(adminv1.CodeDeviceRevoked), 0},
 		{"bucket not found", apiError(adminv1.CodeBucketNotFound), 0},
 		{"rate limited", apiError(adminv1.CodeRateLimited), 0},
 		{"transport error", errors.New("connection reset"), 0},
