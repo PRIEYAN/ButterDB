@@ -1,6 +1,7 @@
 package objects
 
 import (
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"os"
 
 	"fyne.io/fyne/v2"
@@ -70,7 +71,7 @@ func (b *browser) saveSingle(bucket, key string) {
 	if location := b.startLocation(); location != nil {
 		dlg.SetLocation(location)
 	}
-	dlg.Show()
+	shell.ShowFileDialog(b.win, dlg)
 }
 
 func (b *browser) downloadOne(bucket, key, target string) {
@@ -105,5 +106,5 @@ func (b *browser) chooseFolder(bucket, prefix string, keys []string) {
 	if location := b.startLocation(); location != nil {
 		dlg.SetLocation(location)
 	}
-	dlg.Show()
+	shell.ShowFileDialog(b.win, dlg)
 }

@@ -119,5 +119,5 @@ func (p *preferencesPanel) onBrowse() {
 	if start, err := storage.ListerForURI(storage.NewFileURI(p.downloadDir.Text)); err == nil {
 		picker.SetLocation(start)
 	}
-	picker.Show()
+	shell.ShowFileDialog(win, picker)
 }

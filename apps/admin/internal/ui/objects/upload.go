@@ -5,7 +5,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
@@ -31,19 +30,13 @@ func (b *browser) chooseFileToUpload() {
 		b.inform(chooseBucketHint)
 		return
 	}
-	dlg := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
-		if err != nil {
-			b.present(model.Describe(err, b.now()))
+	shell.ShowFilesOpen(b.win, "Upload files", func(paths []string) {
+		if len(paths) == 1 {
+			go b.prepareSingleUpload(bucket, prefix, paths[0])
 			return
 		}
-		if reader == nil {
-			return
-		}
-		path := reader.URI().Path()
-		_ = reader.Close()
-		go b.prepareSingleUpload(bucket, prefix, path)
-	}, b.win)
-	dlg.Show()
+		go b.uploadPaths(bucket, prefix, paths)
+	})
 }
 
 func (b *browser) prepareSingleUpload(bucket, prefix, path string) {
