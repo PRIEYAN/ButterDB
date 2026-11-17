@@ -12,10 +12,6 @@
   <img src="https://img.shields.io/badge/license-Apache--2.0-1C1917" alt="Apache 2.0">
 </p>
 
-<p align="center">
-  <img src="assets/banner.svg" alt="butterDB banner" width="100%">
-</p>
-
 ---
 
 ## What is butterDB?
