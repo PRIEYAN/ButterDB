@@ -3,9 +3,6 @@ package objects
 import (
 	"bytes"
 	"context"
-	"image"
-	"image/color"
-	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -16,7 +13,6 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
@@ -416,58 +412,6 @@ func TestScreenContract(t *testing.T) {
 	})
 	screen.Hide()
 	cancel()
-}
-
-func smallPNG(t *testing.T) []byte {
-	t.Helper()
-	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
-	img.Set(1, 1, color.RGBA{R: 255, A: 255})
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
-}
-
-func oversizedGIFHeader() []byte {
-	return []byte{'G', 'I', 'F', '8', '9', 'a', 0x41, 0x1f, 0x88, 0x13, 0, 0, 0}
-}
-
-func TestPreviewRendersImage(t *testing.T) {
-	client := newFakeClient()
-	client.pages[""] = adminv1.ObjectList{Objects: []adminv1.ObjectSummary{{Key: "cat.png", ContentType: "image/png", SizeBytes: 100}}}
-	client.metas["cat.png"] = adminv1.ObjectMeta{Key: "cat.png", ContentType: "image/png", SizeBytes: 100, ETag: `"e1"`, Encrypted: true}
-	client.streams["cat.png"] = smallPNG(t)
-	h := newHarness(t, client)
-	h.vmodel.Open(context.Background(), "photos", "")
-	h.vmodel.Focus(context.Background(), "cat.png")
-	h.browser.uiMu.Lock()
-	h.browser.uiMu.Unlock()
-	eventually(t, "decoded preview image", func() bool {
-		h.browser.uiMu.Lock()
-		defer h.browser.uiMu.Unlock()
-		return h.browser.details.image.Image != nil && h.browser.details.image.Visible()
-	})
-	if h.browser.details.image.FillMode != canvas.ImageFillContain || h.browser.details.image.ScaleMode != canvas.ImageScaleSmooth {
-		t.Fatal("preview image is not contain and smooth")
-	}
-}
-
-func TestPreviewRefusesTooManyPixels(t *testing.T) {
-	client := newFakeClient()
-	client.metas["huge.gif"] = adminv1.ObjectMeta{Key: "huge.gif", ContentType: "image/gif", SizeBytes: int64(len(oversizedGIFHeader()))}
-	client.streams["huge.gif"] = oversizedGIFHeader()
-	h := newHarness(t, client)
-	h.vmodel.Open(context.Background(), "photos", "")
-	h.vmodel.Focus(context.Background(), "huge.gif")
-	eventually(t, "pixel ceiling message", func() bool {
-		return h.vmodel.State().Get().Preview.Message == previewTooManyPixel
-	})
-	h.browser.uiMu.Lock()
-	defer h.browser.uiMu.Unlock()
-	if h.browser.details.image.Image != nil && h.browser.details.image.Visible() {
-		t.Fatal("an over-ceiling image was rendered")
-	}
 }
 
 func TestDetailsListsMetaFields(t *testing.T) {

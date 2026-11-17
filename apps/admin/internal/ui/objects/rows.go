@@ -2,11 +2,13 @@ package objects
 
 import (
 	"context"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/shell"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/objects/vm"
 )
@@ -75,7 +77,7 @@ func rowIcon(row vm.Row) fyne.Resource {
 	case vm.RowLoadMore:
 		return theme.MoreHorizontalIcon()
 	}
-	if vm.PreviewSupported(row.Object.ContentType) {
+	if strings.HasPrefix(strings.ToLower(row.Object.ContentType), "image/") {
 		return theme.FileImageIcon()
 	}
 	return theme.FileIcon()
@@ -141,7 +143,12 @@ func (b *browser) activateRow(index int) {
 	case vm.RowFolder:
 		go b.vmodel.OpenFolder(b.commandContext(), row.Key)
 	case vm.RowObject:
-		b.askOpenFile(row)
+		if b.opts.Player != nil && model.MediaKindOf(row.Key, row.Object.ContentType) != model.MediaNone {
+			b.playFrom(row.Key)
+			return
+		}
+		b.focusObject(row.Key)
+		b.win.Canvas().Focus(b.details.focusTarget())
 	}
 }
 

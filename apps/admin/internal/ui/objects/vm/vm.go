@@ -95,7 +95,6 @@ type ViewModel struct {
 	limits      adminv1.Limits
 	limitsKnown bool
 	details     Details
-	preview     Preview
 
 	tmu         sync.Mutex
 	transfers   *model.Observable[TransferList]

@@ -35,8 +35,8 @@ const (
 	filterWidth       = 260
 )
 
-type FileOpener interface {
-	Open(context.Context, string, adminv1.ObjectSummary)
+type MediaPlayer interface {
+	Play(ctx context.Context, bucket string, items []adminv1.ObjectSummary, start int, onError func(message string))
 }
 
 type Options struct {
@@ -45,7 +45,7 @@ type Options struct {
 	Clipboard   model.Clipboard
 	Now         func() time.Time
 	DownloadDir func() string
-	Opener      FileOpener
+	Player      MediaPlayer
 }
 
 type browser struct {
@@ -77,7 +77,6 @@ type browser struct {
 	cancelFocus context.CancelFunc
 	lastProblem *model.Problem
 	shortcuts   []*desktop.CustomShortcut
-	previewKey  string
 }
 
 func newBrowser(v *vm.ViewModel, nav shell.Navigator, w fyne.Window, opts Options) *browser {
@@ -154,6 +153,7 @@ func (b *browser) buildToolbar() fyne.CanvasObject {
 		widget.NewButtonWithIcon("Upload files…", theme.UploadIcon(), b.chooseFileToUpload),
 		widget.NewButtonWithIcon("Download", theme.DownloadIcon(), b.startDownload),
 		widget.NewButtonWithIcon("Delete…", theme.DeleteIcon(), b.requestDelete),
+		widget.NewButtonWithIcon("Queue play", theme.MediaPlayIcon(), b.playMedia),
 		widget.NewButtonWithIcon("Refresh", theme.ViewRefreshIcon(), func() { go b.vmodel.Refresh(b.commandContext()) }),
 	)
 }
@@ -209,7 +209,6 @@ func (b *browser) render(st vm.State) {
 	}
 	b.table.Refresh()
 	b.details.render(st)
-	b.renderPreview(st)
 	b.presentNewProblem(st)
 }
 

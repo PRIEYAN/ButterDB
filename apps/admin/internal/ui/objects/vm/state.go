@@ -29,31 +29,11 @@ type Crumb struct {
 	Prefix string
 }
 
-type PreviewStatus string
-
-const (
-	PreviewNone        PreviewStatus = "none"
-	PreviewLoading     PreviewStatus = "loading"
-	PreviewReady       PreviewStatus = "ready"
-	PreviewUnsupported PreviewStatus = "unsupported"
-	PreviewTooLarge    PreviewStatus = "too_large"
-	PreviewFailed      PreviewStatus = "failed"
-)
-
 type Details struct {
 	Key     string
 	Loading bool
 	Meta    *adminv1.ObjectMeta
 	Problem *model.Problem
-}
-
-type Preview struct {
-	Key         string
-	Status      PreviewStatus
-	ContentType string
-	Data        []byte
-	Message     string
-	Problem     *model.Problem
 }
 
 type State struct {
@@ -71,7 +51,6 @@ type State struct {
 	SelectedFolders []string
 	Limits          adminv1.Limits
 	Details         Details
-	Preview         Preview
 }
 
 func Breadcrumbs(bucket, prefix string) []Crumb {
@@ -131,7 +110,6 @@ func (v *ViewModel) snapshotLocked() State {
 		SelectedFolders: sortedKeys(v.selFolders),
 		Limits:          v.limits,
 		Details:         v.details,
-		Preview:         v.preview,
 	}
 }
 

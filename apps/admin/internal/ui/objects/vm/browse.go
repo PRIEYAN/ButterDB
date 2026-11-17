@@ -54,7 +54,6 @@ func (v *ViewModel) openKeepingFilter(ctx context.Context, bucket, prefix string
 			v.selObjects = make(map[string]struct{})
 			v.selFolders = make(map[string]struct{})
 			v.details = Details{}
-			v.preview = Preview{}
 		}
 		v.bucket = bucket
 		v.prefix = prefix

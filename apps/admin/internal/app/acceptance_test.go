@@ -203,7 +203,7 @@ func (h *harness) downloadObject(bucket, key string, want []byte) {
 	}
 }
 
-func (h *harness) previewObject(key string, want []byte) {
+func (h *harness) showDetails(key string) {
 	h.t.Helper()
 	models := h.session().models
 	models.objects.Focus(h.session().ctx, key)
@@ -211,13 +211,6 @@ func (h *harness) previewObject(key string, want []byte) {
 	st := models.objects.State().Get()
 	if st.Details.Meta == nil || st.Details.Meta.Key != key {
 		h.t.Fatalf("details for %q not loaded: %+v", key, st.Details)
-	}
-	if st.Preview.Status != objectsvm.PreviewReady || !bytes.Equal(st.Preview.Data, want) {
-		h.t.Fatalf("preview status %q with %d bytes, want ready with %d", st.Preview.Status, len(st.Preview.Data), len(want))
-	}
-	h.settle()
-	if got := models.objects.State().Get().Preview.Status; got != objectsvm.PreviewReady {
-		h.t.Fatalf("preview did not survive decoding in the view, status %q", got)
 	}
 }
 
@@ -303,7 +296,7 @@ func TestBucketCRUDUsesTheAdminClient(t *testing.T) {
 	}
 }
 
-func TestObjectUploadDownloadAndPreviewWork(t *testing.T) {
+func TestObjectUploadDownloadAndDetailsWork(t *testing.T) {
 	h := newHarness(t, withLinked())
 	h.admin.seedBucket("photos")
 	h.startInProject("photos")
@@ -315,7 +308,7 @@ func TestObjectUploadDownloadAndPreviewWork(t *testing.T) {
 	if keys := h.refreshObjects(); !slices.Equal(keys, []string{"holiday.png"}) {
 		t.Fatalf("listed objects %v", keys)
 	}
-	h.previewObject("holiday.png", data)
+	h.showDetails("holiday.png")
 	h.downloadObject("photos", "holiday.png", data)
 	h.deleteObject("photos", "holiday.png")
 }

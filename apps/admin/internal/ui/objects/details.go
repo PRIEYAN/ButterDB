@@ -1,20 +1,12 @@
 package objects
 
 import (
-	"bytes"
-	"image"
-	_ "image/gif"
-	_ "image/jpeg"
-	_ "image/png"
 	"sort"
 	"strconv"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
 
 	"github.com/PRIEYAN/ButterDB/api/adminv1"
 	"github.com/PRIEYAN/ButterDB/apps/admin/internal/model"
@@ -23,11 +15,8 @@ import (
 )
 
 const (
-	emptyDetailsText    = "Select an object to see its details."
-	loadingDetailsText  = "Loading details…"
-	previewTooManyPixel = "Too many pixels to preview (limit 40 megapixels)"
-	previewDecodeFailed = "This image cannot be previewed"
-	previewHeight       = 260
+	emptyDetailsText   = "Select an object to see its details."
+	loadingDetailsText = "Loading details…"
 )
 
 type focusFrame struct {
@@ -54,13 +43,11 @@ func (f *focusFrame) TypedRune(rune) {}
 func (f *focusFrame) TypedKey(*fyne.KeyEvent) {}
 
 type detailsPanel struct {
-	root    fyne.CanvasObject
-	clip    model.Clipboard
-	fields  *fyne.Container
-	status  *widget.Label
-	image   *canvas.Image
-	caption *widget.Label
-	frame   *focusFrame
+	root   fyne.CanvasObject
+	clip   model.Clipboard
+	fields *fyne.Container
+	status *widget.Label
+	frame  *focusFrame
 }
 
 func newDetailsPanel(clip model.Clipboard) *detailsPanel {
@@ -68,15 +55,8 @@ func newDetailsPanel(clip model.Clipboard) *detailsPanel {
 	d.status = widget.NewLabel(emptyDetailsText)
 	d.status.Wrapping = fyne.TextWrapWord
 	d.fields = container.NewVBox()
-	d.image = canvas.NewImageFromImage(nil)
-	d.image.FillMode = canvas.ImageFillContain
-	d.image.ScaleMode = canvas.ImageScaleSmooth
-	d.image.SetMinSize(fyne.NewSize(0, previewHeight))
-	d.image.Hide()
-	d.caption = widget.NewLabel("")
-	d.caption.Wrapping = fyne.TextWrapWord
-	d.frame = newFocusFrame(container.NewVBox(shell.NewCodeBlock(d.image), d.caption))
-	d.root = container.NewVScroll(container.NewVBox(d.status, d.frame, d.fields))
+	d.frame = newFocusFrame(container.NewVBox(d.status, d.fields))
+	d.root = container.NewVScroll(d.frame)
 	return d
 }
 
@@ -137,82 +117,4 @@ func metaFields(m adminv1.ObjectMeta) []metaField {
 		fields = append(fields, metaField{"Metadata " + name, m.UserMetadata[name]})
 	}
 	return fields
-}
-
-func (d *detailsPanel) showImage(img image.Image) {
-	d.image.Image = img
-	d.image.Show()
-	d.image.Refresh()
-	d.caption.SetText("")
-}
-
-func (d *detailsPanel) showCaption(text string) {
-	d.image.Hide()
-	d.caption.SetText(text)
-}
-
-func (b *browser) renderPreview(st vm.State) {
-	switch st.Preview.Status {
-	case vm.PreviewReady:
-		b.startDecode(st.Preview)
-	case vm.PreviewLoading:
-		b.resetPreviewKey()
-		b.details.showCaption("Loading preview…")
-	case vm.PreviewUnsupported, vm.PreviewTooLarge:
-		b.resetPreviewKey()
-		b.details.showCaption(st.Preview.Message)
-	case vm.PreviewFailed:
-		b.resetPreviewKey()
-		title := "Cannot load the preview."
-		if st.Preview.Problem != nil {
-			title = st.Preview.Problem.Title
-		}
-		b.details.showCaption(title)
-	default:
-		b.resetPreviewKey()
-		b.details.showCaption("")
-	}
-}
-
-func (b *browser) resetPreviewKey() {
-	b.mu.Lock()
-	b.previewKey = ""
-	b.mu.Unlock()
-}
-
-func (b *browser) startDecode(p vm.Preview) {
-	b.mu.Lock()
-	already := b.previewKey == p.Key
-	b.previewKey = p.Key
-	b.mu.Unlock()
-	if already {
-		return
-	}
-	b.details.showCaption("Loading preview…")
-	go b.decodePreview(p)
-}
-
-func (b *browser) decodePreview(p vm.Preview) {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(p.Data))
-	if err != nil {
-		b.vmodel.MarkPreviewFailed(p.Key, previewDecodeFailed)
-		return
-	}
-	if vm.ExceedsPixelCeiling(cfg.Width, cfg.Height) {
-		b.vmodel.MarkPreviewFailed(p.Key, previewTooManyPixel)
-		return
-	}
-	img, _, err := image.Decode(bytes.NewReader(p.Data))
-	if err != nil {
-		b.vmodel.MarkPreviewFailed(p.Key, previewDecodeFailed)
-		return
-	}
-	b.ui(func() {
-		b.mu.Lock()
-		current := b.previewKey == p.Key
-		b.mu.Unlock()
-		if current {
-			b.details.showImage(img)
-		}
-	})
 }
