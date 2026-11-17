@@ -141,7 +141,6 @@ func (b *browser) activateRow(index int) {
 	case vm.RowFolder:
 		go b.vmodel.OpenFolder(b.commandContext(), row.Key)
 	case vm.RowObject:
-		b.focusObject(row.Key)
 		b.askOpenFile(row)
 	}
 }

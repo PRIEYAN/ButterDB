@@ -48,7 +48,13 @@ func (c *composition) activate(p embedded.Project) {
 		previous.cancel()
 		c.resetShell()
 	}
-	for _, sc := range c.buildScreens(s) {
+	screens, err := c.buildScreens(s)
+	if err != nil {
+		cancel()
+		c.abandon(err)
+		return
+	}
+	for _, sc := range screens {
 		c.sh.Register(hookedScreen{Screen: sc, life: s.ctx})
 	}
 	c.sh.SetProjectLabel(p.Name)
@@ -76,7 +82,7 @@ func (c *composition) followProjectName(s *session) {
 	}()
 }
 
-func (c *composition) buildScreens(s *session) []shell.Screen {
+func (c *composition) buildScreens(s *session) ([]shell.Screen, error) {
 	nav := c.sh.Navigator()
 	notifier := c.sh.Notifier()
 	now := c.opts.Now
@@ -93,7 +99,7 @@ func (c *composition) buildScreens(s *session) []shell.Screen {
 	models.objects = objectsvm.New(s.api, now, objectOptions...)
 	fileViewer, err := viewer.New(viewer.Dependencies{Windows: c.app, Source: s.api, Player: mpvPlayer{}, Random: rand.Reader})
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	objectsScreen := objects.NewScreen(models.objects, nav, c.win, objects.Options{
 		Context:     s.ctx,
@@ -116,7 +122,7 @@ func (c *composition) buildScreens(s *session) []shell.Screen {
 		buckets.NewScreenWithEnv(models.buckets, nav, buckets.Env{Window: window, Clipboard: c.clip}),
 		objectsScreen,
 		settingsui.NewScreen(models.settings, nav, notifier, c.clip, c.win),
-	}
+	}, nil
 }
 
 func (c *composition) downloadDir() string {

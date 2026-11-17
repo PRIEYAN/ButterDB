@@ -15,14 +15,14 @@ import (
 )
 
 type memorySource struct {
-	mu     sync.Mutex
-	meta   adminv1.ObjectMeta
-	data   []byte
-	opts   []adminv1.GetObjectOptions
-	keys   []string
-	err    error
+	mu      sync.Mutex
+	meta    adminv1.ObjectMeta
+	data    []byte
+	opts    []adminv1.GetObjectOptions
+	keys    []string
+	err     error
 	metaErr error
-	closed bool
+	closed  bool
 }
 
 func (s *memorySource) ObjectMeta(context.Context, string, string) (adminv1.ObjectMeta, error) {
@@ -64,7 +64,7 @@ func (b *trackedBody) Close() error { b.close(); return nil }
 func TestMediaStreamRanges(t *testing.T) {
 	cases := []struct {
 		name, method, header, body, contentRange string
-		status                                 int
+		status                                   int
 	}{
 		{"full", "GET", "", "0123456789", "", 200},
 		{"bounded", "GET", "bytes=2-5", "2345", "bytes 2-5/10", 206},

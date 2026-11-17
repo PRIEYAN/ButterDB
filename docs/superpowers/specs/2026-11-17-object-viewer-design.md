@@ -16,7 +16,7 @@ Single-click retains selection and details. Double-click or Enter on an
 object opens an Open/Cancel popup showing its name, type, and readable size.
 Folders retain their existing navigation. Open creates a butterDB viewer
 window with loading and error states. Images render with preserved aspect
-ratio. Video and audio use MPV's play/pause, seek, volume and fullscreen
+ratio. Video and audio use MPV's play/pause, seek and volume
 controls. Unsupported formats show a file card without interpreting bytes.
 
 The implementation choice is a child MPV surface embedded in a Fyne-owned
