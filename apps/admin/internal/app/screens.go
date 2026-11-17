@@ -13,14 +13,19 @@ import (
 
 type hookedScreen struct {
 	shell.Screen
-	beforeShow func(ctx context.Context, p model.Params) bool
+	beforeShow   func(ctx context.Context, p model.Params) bool
+	whenLoopRuns func(func())
 }
 
 func (h hookedScreen) Show(ctx context.Context, p model.Params) {
 	if h.beforeShow != nil && !h.beforeShow(ctx, p) {
 		return
 	}
-	h.Screen.Show(ctx, p)
+	if h.whenLoopRuns == nil {
+		h.Screen.Show(ctx, p)
+		return
+	}
+	h.whenLoopRuns(skipIfDone(ctx, func() { h.Screen.Show(ctx, p) }))
 }
 
 type clipboardAdapter struct {

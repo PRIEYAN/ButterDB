@@ -44,25 +44,29 @@ type composition struct {
 	cancel    context.CancelFunc
 	connectVM *connectvm.ViewModel
 	gate      shell.Screen
+	loop      *loopGate
 
 	mu   sync.Mutex
 	sess *session
 }
 
 func Build(a fyne.App, w fyne.Window, opts Options) (*shell.Shell, error) {
-	c, err := compose(a, w, opts)
+	c, err := compose(a, w, opts, lifecycleStart(a))
 	if err != nil {
 		return nil, err
 	}
 	return c.sh, nil
 }
 
-func compose(a fyne.App, w fyne.Window, opts Options) (*composition, error) {
+func compose(a fyne.App, w fyne.Window, opts Options, afterLoopStarts func(func())) (*composition, error) {
 	if a == nil {
 		return nil, fmt.Errorf("app: %w: fyne app", ErrMissingDependency)
 	}
 	if w == nil {
 		return nil, fmt.Errorf("app: %w: window", ErrMissingDependency)
+	}
+	if afterLoopStarts == nil {
+		return nil, fmt.Errorf("app: %w: loop start hook", ErrMissingDependency)
 	}
 	if err := opts.validate(); err != nil {
 		return nil, err
@@ -76,6 +80,7 @@ func compose(a fyne.App, w fyne.Window, opts Options) (*composition, error) {
 		prefs:  a.Preferences(),
 		ctx:    ctx,
 		cancel: cancel,
+		loop:   &loopGate{},
 	}
 	a.Settings().SetTheme(settingsui.ThemeFor(c.prefs.StringWithFallback(settingsvm.PrefTheme, settingsvm.ThemeSystem)))
 	c.sh = shell.New(a, w)
@@ -86,7 +91,8 @@ func compose(a fyne.App, w fyne.Window, opts Options) (*composition, error) {
 	c.win.bindQuitShortcut()
 	w.SetOnClosed(c.shutdown)
 	c.sh.Navigator().Navigate(model.RouteConnect, nil)
-	go c.connectVM.AutoConnect(c.ctx)
+	c.loop.whenOpen(func() { go c.connectVM.AutoConnect(c.ctx) })
+	afterLoopStarts(c.loop.release)
 	return c, nil
 }
 
@@ -111,7 +117,7 @@ func (c *composition) buildConnect() error {
 		return fmt.Errorf("app: connect view model: %w", err)
 	}
 	c.connectVM = v
-	c.gate = hookedScreen{Screen: connect.NewScreen(v, c.sh.Navigator()), beforeShow: c.enterConnect}
+	c.gate = hookedScreen{Screen: connect.NewScreen(v, c.sh.Navigator()), beforeShow: c.enterConnect, whenLoopRuns: c.loop.whenOpen}
 	c.sh.Register(c.gate)
 	return nil
 }

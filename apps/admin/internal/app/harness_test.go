@@ -66,6 +66,7 @@ type harness struct {
 	win       fyne.Window
 	comp      *composition
 	opts      Options
+	afterLoop func(func())
 	configDir string
 	store     *profilestore.Store
 	files     *credstore.File
@@ -90,7 +91,7 @@ func newHarness(t *testing.T, mutate ...func(*Options)) *harness {
 	if err != nil {
 		t.Fatalf("file store: %v", err)
 	}
-	h := &harness{t: t, queue: queue, app: wrapped, configDir: configDir, store: store, files: files}
+	h := &harness{t: t, queue: queue, app: wrapped, configDir: configDir, store: store, files: files, afterLoop: func(start func()) { start() }}
 	h.opts = Options{
 		Version:     "0.1.0",
 		Now:         func() time.Time { return fixedNow },
@@ -111,7 +112,7 @@ func newHarness(t *testing.T, mutate ...func(*Options)) *harness {
 func (h *harness) start() {
 	h.t.Helper()
 	h.win = h.app.NewWindow("test")
-	comp, err := compose(h.app, h.win, h.opts)
+	comp, err := compose(h.app, h.win, h.opts, h.afterLoop)
 	if err != nil {
 		h.t.Fatalf("compose: %v", err)
 	}
