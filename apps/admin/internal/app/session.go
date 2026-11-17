@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 
 	"fyne.io/fyne/v2"
 
@@ -15,6 +16,7 @@ import (
 	objectsvm "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/objects/vm"
 	settingsui "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings"
 	settingsvm "github.com/PRIEYAN/ButterDB/apps/admin/internal/ui/settings/vm"
+	"github.com/PRIEYAN/ButterDB/apps/admin/internal/viewer"
 	"github.com/PRIEYAN/ButterDB/internal/embedded"
 )
 
@@ -89,12 +91,17 @@ func (c *composition) buildScreens(s *session) []shell.Screen {
 		objectOptions = append(objectOptions, objectsvm.WithRandom(c.opts.Random))
 	}
 	models.objects = objectsvm.New(s.api, now, objectOptions...)
+	fileViewer, err := viewer.New(viewer.Dependencies{Windows: c.app, Source: s.api, Player: mpvPlayer{}, Random: rand.Reader})
+	if err != nil {
+		panic(err)
+	}
 	objectsScreen := objects.NewScreen(models.objects, nav, c.win, objects.Options{
 		Context:     s.ctx,
 		Notifier:    notifier,
 		Clipboard:   c.clip,
 		Now:         now,
 		DownloadDir: c.downloadDir,
+		Opener:      fileViewer,
 	})
 	models.settings = settingsvm.New(s.api, now, settingsvm.Session{
 		Account:            c.opts.Engine,

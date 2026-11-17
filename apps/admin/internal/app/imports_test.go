@@ -68,6 +68,8 @@ func importAllowed(pkg, importPath string) bool {
 		return importPath == adminAPI || importPath == embeddedPkg || rel == "internal/model"
 	case pkg == "internal/shell":
 		return rel == "internal/model" || importPath == adminAPI || isFyne(importPath)
+	case pkg == "internal/viewer":
+		return rel == "internal/shell" || importPath == adminAPI || isFyne(importPath) || importPath == imageX || strings.HasPrefix(importPath, imageX+"/")
 	}
 	if screen, ok := screenOf(pkg); ok && !strings.Contains(strings.TrimPrefix(pkg, "internal/ui/"+screen), "/") {
 		return screenImportAllowed(pkg, screen, importPath, rel)
