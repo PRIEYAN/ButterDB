@@ -1,8 +1,6 @@
-<p align="center">
-  <img src="assets/icon.png" width="120" alt="butterDB icon">
-</p>
-
-<h1 align="center">butterDB</h1>
+<h1 align="center">
+  <img src="assets/icon.png" width="64" height="64" alt="butterDB icon" align="middle">&nbsp;butterDB
+</h1>
 
 <p align="center">
   <b>S3-compatible object storage that keeps its bytes in your own Telegram account.</b>
