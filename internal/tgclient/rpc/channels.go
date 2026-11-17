@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gotd/td/telegram/query/dialogs"
 	"github.com/gotd/td/tg"
 
 	"github.com/PRIEYAN/ButterDB/internal/tgclient"
+	"github.com/PRIEYAN/ButterDB/internal/tgclient/flow"
 )
 
 const (
@@ -84,10 +86,13 @@ func createdChannel(updates tg.UpdatesClass) (tgclient.InputPeer, bool) {
 
 func (c *Client) ListOwnedChannels(ctx context.Context) ([]tgclient.Channel, error) {
 	var channels []tgclient.Channel
-	err := c.read(ctx, "list owned channels", func(ctx context.Context, api *tg.Client) error {
-		var err error
-		channels, err = collectOwnedChannels(ctx, folderQueries(api)...)
-		return err
+	// Listing every dialog at startup often trips a short flood wait; wait it out rather than fail the boot.
+	err := listFloodPolicy(c.sleeper).Do(ctx, func() error {
+		return c.read(ctx, "list owned channels", func(ctx context.Context, api *tg.Client) error {
+			var err error
+			channels, err = collectOwnedChannels(ctx, folderQueries(api)...)
+			return err
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -179,4 +184,19 @@ func (c *Client) EditChannelTitle(ctx context.Context, peer tgclient.InputPeer, 
 		}
 		return nil
 	})
+}
+
+const (
+	listFloodWaitRetries  = 5
+	listFloodWaitMax      = 5 * time.Minute
+	listFloodWaitMaxTotal = 10 * time.Minute
+)
+
+func listFloodPolicy(sleeper flow.Sleeper) flow.FloodWaitRetryPolicy {
+	return flow.FloodWaitRetryPolicy{
+		MaxRetries:   listFloodWaitRetries,
+		MaxWait:      listFloodWaitMax,
+		MaxTotalWait: listFloodWaitMaxTotal,
+		Sleeper:      sleeper,
+	}
 }

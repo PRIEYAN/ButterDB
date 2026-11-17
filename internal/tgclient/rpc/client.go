@@ -11,6 +11,7 @@ import (
 
 	"github.com/PRIEYAN/ButterDB/internal/domain/errs"
 	"github.com/PRIEYAN/ButterDB/internal/tgclient"
+	"github.com/PRIEYAN/ButterDB/internal/tgclient/flow"
 	"github.com/PRIEYAN/ButterDB/internal/tgclient/scope"
 )
 
@@ -27,12 +28,15 @@ type Dependencies struct {
 	Invoker scope.Invoker
 	Gate    tgclient.WriteGate
 	Random  io.Reader
+	// Sleeper waits out flood waits on whole-list reads; nil uses the system clock.
+	Sleeper flow.Sleeper
 }
 
 type Client struct {
 	invoker scope.Invoker
 	gate    tgclient.WriteGate
 	random  io.Reader
+	sleeper flow.Sleeper
 }
 
 var _ tgclient.ChannelRPC = (*Client)(nil)
@@ -47,7 +51,7 @@ func New(deps Dependencies) (*Client, error) {
 	if deps.Random == nil {
 		return nil, fmt.Errorf("rpc: %w: random", errs.ErrMissingDependency)
 	}
-	return &Client{invoker: deps.Invoker, gate: deps.Gate, random: deps.Random}, nil
+	return &Client{invoker: deps.Invoker, gate: deps.Gate, random: deps.Random, sleeper: deps.Sleeper}, nil
 }
 
 func (c *Client) read(ctx context.Context, operation string, fn func(ctx context.Context, api *tg.Client) error) error {
